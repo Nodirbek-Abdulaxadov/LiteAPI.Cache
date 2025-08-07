@@ -362,6 +362,6 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
-/target
+/RustLib/target/
 
-/Cargo.lock
+/RustLib/Cargo.lock
