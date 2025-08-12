@@ -69,10 +69,40 @@ pub extern "C" fn cache_remove(key: *const c_char) {
 
     let mut map = CACHE.write().unwrap();
     map.remove(&key_str);
+    flush_memory();
 }
 
 #[no_mangle]
 pub extern "C" fn cache_clear_all() {
     let mut map = CACHE.write().unwrap();
     *map = HashMap::new();
+    flush_memory();
+}
+
+#[cfg(target_os = "windows")]
+pub fn flush_memory() {
+    use std::os::raw::c_void;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn SetProcessWorkingSetSize(
+            hProcess: *mut c_void,
+            dwMinimumWorkingSetSize: usize,
+            dwMaximumWorkingSetSize: usize,
+        ) -> i32;
+    }
+
+    unsafe {
+        let handle = GetCurrentProcess();
+        SetProcessWorkingSetSize(handle, usize::MAX, usize::MAX);
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn flush_memory() {
+    use libc;
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
