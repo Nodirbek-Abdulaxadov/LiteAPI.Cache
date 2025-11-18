@@ -22,6 +22,14 @@ public class ConcurrencyTest
         var task5 = TestCachePerformance(1000000);
         justCacheResults.Add(task5);
 
+        // Mixed stress (read/write/remove concurrently)
+        var stress = MixedStress(durationSeconds: 5, keyCount: 10_000);
+        justCacheResults.Add((
+            "JustCache MixedStress 5s",
+            stress.setOps.ToString(),
+            stress.getOps.ToString()
+        ));
+
         // Cleanup
         Stopwatch stopwatch = Stopwatch.StartNew();
         JustCache.ClearAll();
@@ -51,5 +59,77 @@ public class ConcurrencyTest
         Task.WaitAll(tasks);
         stopwatch.Stop();
         return (title, stopwatch.ElapsedMicroseconds(), stopwatch.ElapsedMicroseconds());
+    }
+
+    private static (long setOps, long getOps, long removeOps, long misses, long invalid) MixedStress(int durationSeconds, int keyCount)
+    {
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(durationSeconds));
+        var token = cts.Token;
+        var rnd = new Random();
+
+        // Prepare keys
+        var keys = Enumerable.Range(0, keyCount).Select(_ => Guid.NewGuid().ToString()).ToArray();
+        var versions = new ConcurrentDictionary<string, int>();
+
+        // Preload
+        foreach (var k in keys)
+        {
+            JustCache.SetString(k, $"{k}:0");
+            versions[k] = 0;
+        }
+
+        long setOps = 0, getOps = 0, removeOps = 0, misses = 0, invalid = 0;
+
+        int writerThreads = Math.Max(2, Environment.ProcessorCount / 4);
+        int readerThreads = Math.Max(4, Environment.ProcessorCount / 2);
+        int removerThreads = 1;
+
+        var writers = Enumerable.Range(0, writerThreads).Select(_ => Task.Run(() =>
+        {
+            var localRnd = new Random();
+            while (!token.IsCancellationRequested)
+            {
+                var k = keys[localRnd.Next(keys.Length)];
+                var v = versions.AddOrUpdate(k, _ => 1, (_, old) => old + 1);
+                JustCache.SetString(k, $"{k}:{v}");
+                Interlocked.Increment(ref setOps);
+            }
+        }, token)).ToArray();
+
+        var readers = Enumerable.Range(0, readerThreads).Select(_ => Task.Run(() =>
+        {
+            var localRnd = new Random();
+            while (!token.IsCancellationRequested)
+            {
+                var k = keys[localRnd.Next(keys.Length)];
+                var s = JustCache.GetString(k);
+                if (s == null)
+                {
+                    Interlocked.Increment(ref misses);
+                }
+                else
+                {
+                    // Basic shape check: should start with key and contain ':'
+                    if (!s.StartsWith(k) || !s.Contains(':'))
+                        Interlocked.Increment(ref invalid);
+                }
+                Interlocked.Increment(ref getOps);
+            }
+        }, token)).ToArray();
+
+        var removers = Enumerable.Range(0, removerThreads).Select(_ => Task.Run(() =>
+        {
+            var localRnd = new Random();
+            while (!token.IsCancellationRequested)
+            {
+                var k = keys[localRnd.Next(keys.Length)];
+                JustCache.Remove(k);
+                Interlocked.Increment(ref removeOps);
+            }
+        }, token)).ToArray();
+
+        Task.WaitAll(writers.Concat(readers).Concat(removers).ToArray());
+
+        return (setOps, getOps, removeOps, misses, invalid);
     }
 }

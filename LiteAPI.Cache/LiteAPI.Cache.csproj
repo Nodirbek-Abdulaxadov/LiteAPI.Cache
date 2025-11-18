@@ -7,7 +7,6 @@
     <Authors>Nodirbek Abdulaxadov</Authors>
     <Company>MDevs Group</Company>
     <Description>High-performance GC-free cache powered by Rust and C# interop</Description>
-    <PackageIcon>logo.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache</RepositoryUrl>
     <Version>1.0.1</Version>
@@ -20,19 +19,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="rust_cache.dll">
+    <Content Include="rust_cache.dll" Condition="Exists('rust_cache.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="librust_cache.so">
+    <Content Include="librust_cache.so" Condition="Exists('librust_cache.so')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="librust_cache.dylib" Condition="Exists('librust_cache.dylib')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\..\..\Downloads\logo.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
     <None Include="..\LICENSE.txt">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
@@ -42,5 +40,12 @@
       <PackagePath>\</PackagePath>
     </None>
   </ItemGroup>
+
+  <!-- Auto-copy Rust artifacts into this project folder if they exist -->
+  <Target Name="CopyRustArtifacts" BeforeTargets="Build">
+    <Copy SourceFiles="..\RustLib\target\release\rust_cache.dll" DestinationFiles="$(MSBuildProjectDirectory)\rust_cache.dll" Condition="Exists('..\RustLib\target\release\rust_cache.dll')" />
+    <Copy SourceFiles="..\RustLib\target\release\librust_cache.so" DestinationFiles="$(MSBuildProjectDirectory)\librust_cache.so" Condition="Exists('..\RustLib\target\release\librust_cache.so')" />
+    <Copy SourceFiles="..\RustLib\target\release\librust_cache.dylib" DestinationFiles="$(MSBuildProjectDirectory)\librust_cache.dylib" Condition="Exists('..\RustLib\target\release\librust_cache.dylib')" />
+  </Target>
 
 </Project>

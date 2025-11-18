@@ -57,13 +57,13 @@ public static partial class JustCache
     #region  Set Method
 
     [DllImport(WindowsLib, EntryPoint = "cache_set", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cache_set_win(string key, byte[] val, UIntPtr len);
+    private static extern void cache_set_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
 
     [DllImport(LinuxLib, EntryPoint = "cache_set", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cache_set_linux(string key, byte[] val, UIntPtr len);
+    private static extern void cache_set_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
 
     [DllImport(MacLib, EntryPoint = "cache_set", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cache_set_mac(string key, byte[] val, UIntPtr len);
+    private static extern void cache_set_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
 
     public static void Set(string key, byte[] val)
     {
@@ -75,6 +75,8 @@ public static partial class JustCache
             cache_set_linux(key, val, len);
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             cache_set_mac(key, val, len);
+
+        JustCacheEventSource.Log.ReportSet(val.Length);
     }
 
     public static void SetString(string key, string val)
@@ -91,13 +93,22 @@ public static partial class JustCache
     #region  Get Method
 
     [DllImport(WindowsLib, EntryPoint = "cache_get", CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr cache_get_win(string key, out UIntPtr len);
+    private static extern IntPtr cache_get_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
 
     [DllImport(LinuxLib, EntryPoint = "cache_get", CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr cache_get_linux(string key, out UIntPtr len);
+    private static extern IntPtr cache_get_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
 
     [DllImport(MacLib, EntryPoint = "cache_get", CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr cache_get_mac(string key, out UIntPtr len);
+    private static extern IntPtr cache_get_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+
+    [DllImport(WindowsLib, EntryPoint = "cache_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void cache_free_win(IntPtr ptr, UIntPtr len);
+
+    [DllImport(LinuxLib, EntryPoint = "cache_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void cache_free_linux(IntPtr ptr, UIntPtr len);
+
+    [DllImport(MacLib, EntryPoint = "cache_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void cache_free_mac(IntPtr ptr, UIntPtr len);
 
     public static byte[]? Get(string key)
     {
@@ -114,10 +125,27 @@ public static partial class JustCache
             throw new PlatformNotSupportedException();
 
         if (ptr == IntPtr.Zero || len == UIntPtr.Zero)
+        {
+            JustCacheEventSource.Log.ReportGetMiss();
             return null;
+        }
 
         byte[] result = new byte[(int)len];
         Marshal.Copy(ptr, result, 0, (int)len);
+        // Free the native buffer if cache_free exists (fallback for older DLLs)
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                cache_free_win(ptr, len);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                cache_free_linux(ptr, len);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                cache_free_mac(ptr, len);
+        }
+        catch (EntryPointNotFoundException) { }
+        catch (DllNotFoundException) { }
+
+        JustCacheEventSource.Log.ReportGetHit(result.Length);
         return result;
     }
 
@@ -131,27 +159,51 @@ public static partial class JustCache
         return System.Text.Encoding.UTF8.GetString(bytes);
     }
 
+    public static bool TryGet(string key, out byte[] value)
+    {
+        var bytes = Get(key);
+        if (bytes == null)
+        {
+            value = Array.Empty<byte>();
+            return false;
+        }
+        value = bytes;
+        return true;
+    }
+
+    public static bool TryGetString(string key, out string value)
+    {
+        var s = GetString(key);
+        if (s == null)
+        {
+            value = string.Empty;
+            return false;
+        }
+        value = s;
+        return true;
+    }
+
     #endregion
 
     #region  Clear Methods
 
     // Windows
     [DllImport("rust_cache.dll", EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cache_remove_win(string key);
+    private static extern void cache_remove_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
 
     [DllImport("rust_cache.dll", EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_win();
 
     // Linux
     [DllImport("librust_cache.so", EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cache_remove_linux(string key);
+    private static extern void cache_remove_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
 
     [DllImport("librust_cache.so", EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_linux();
 
     // macOS
     [DllImport("librust_cache.dylib", EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cache_remove_mac(string key);
+    private static extern void cache_remove_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
 
     [DllImport("librust_cache.dylib", EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_mac();
@@ -164,6 +216,8 @@ public static partial class JustCache
             cache_remove_linux(key);
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             cache_remove_mac(key);
+
+        JustCacheEventSource.Log.ReportRemove();
     }
 
     public static void ClearAll()
@@ -174,7 +228,45 @@ public static partial class JustCache
             cache_clear_all_linux();
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             cache_clear_all_mac();
+
+        JustCacheEventSource.Log.ReportClear();
     }
 
     #endregion
+}
+
+internal sealed class JustCacheEventSource : System.Diagnostics.Tracing.EventSource
+{
+    public static readonly JustCacheEventSource Log = new JustCacheEventSource();
+
+    private System.Diagnostics.Tracing.EventCounter? _setCounter;
+    private System.Diagnostics.Tracing.EventCounter? _getHitCounter;
+    private System.Diagnostics.Tracing.EventCounter? _getMissCounter;
+    private System.Diagnostics.Tracing.EventCounter? _removeCounter;
+    private System.Diagnostics.Tracing.EventCounter? _clearCounter;
+
+    private JustCacheEventSource() : base("LiteAPI.JustCache")
+    {
+        _setCounter = new System.Diagnostics.Tracing.EventCounter("justcache-set", this);
+        _getHitCounter = new System.Diagnostics.Tracing.EventCounter("justcache-get-hit", this);
+        _getMissCounter = new System.Diagnostics.Tracing.EventCounter("justcache-get-miss", this);
+        _removeCounter = new System.Diagnostics.Tracing.EventCounter("justcache-remove", this);
+        _clearCounter = new System.Diagnostics.Tracing.EventCounter("justcache-clear", this);
+    }
+
+    public void ReportSet(int bytes) => _setCounter?.WriteMetric(bytes);
+    public void ReportGetHit(int bytes) => _getHitCounter?.WriteMetric(bytes);
+    public void ReportGetMiss() => _getMissCounter?.WriteMetric(1);
+    public void ReportRemove() => _removeCounter?.WriteMetric(1);
+    public void ReportClear() => _clearCounter?.WriteMetric(1);
+
+    protected override void Dispose(bool disposing)
+    {
+        _setCounter?.Dispose();
+        _getHitCounter?.Dispose();
+        _getMissCounter?.Dispose();
+        _removeCounter?.Dispose();
+        _clearCounter?.Dispose();
+        base.Dispose(disposing);
+    }
 }

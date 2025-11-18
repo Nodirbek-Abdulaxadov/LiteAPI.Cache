@@ -37,9 +37,9 @@ pub extern "C" fn cache_set(key: *const c_char, value: *const c_uchar, len: usiz
 }
 
 #[no_mangle]
-pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *const c_uchar {
+pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *mut c_uchar {
     if key.is_null() || out_len.is_null() {
-        return std::ptr::null();
+        return std::ptr::null_mut();
     }
 
     let key = unsafe {
@@ -51,15 +51,18 @@ pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *const c
 
     let mut cache = CACHE.write().unwrap();
     if let Some(val) = cache.get(key) {
-        unsafe {
-            *out_len = val.len();
-        }
-        val.as_ptr()
+        let len = val.len();
+        let mut buf = Vec::with_capacity(len);
+        buf.extend_from_slice(val);
+        let ptr = buf.as_mut_ptr();
+        std::mem::forget(buf);
+        unsafe { *out_len = len; }
+        ptr
     } else {
         unsafe {
             *out_len = 0;
         }
-        std::ptr::null()
+        std::ptr::null_mut()
     }
 }
 
@@ -84,4 +87,14 @@ pub extern "C" fn cache_remove(key: *const c_char) {
 pub extern "C" fn cache_clear_all() {
     let mut cache = CACHE.write().unwrap();
     cache.clear();
+}
+
+#[no_mangle]
+pub extern "C" fn cache_free(ptr: *mut c_uchar, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Vec::from_raw_parts(ptr, len, len);
+    }
 }

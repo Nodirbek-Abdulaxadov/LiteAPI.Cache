@@ -1,5 +1,21 @@
 using LiteAPI.Cache;
 
+if (args.Length > 0 && string.Equals(args[0], "bench", StringComparison.OrdinalIgnoreCase))
+{
+	Benchs.RunBenchmarks();
+	return;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "concurrency", StringComparison.OrdinalIgnoreCase))
+{
+	var results = ConcurrencyTest.Start();
+	foreach (var (title, setElapsed, getElapsed) in results)
+	{
+		Console.WriteLine($"{title} | set:{setElapsed} get:{getElapsed}");
+	}
+	return;
+}
+
 string key = "example_key";
 Student student = Student.Random(1);
 
