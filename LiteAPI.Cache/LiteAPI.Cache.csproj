@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFrameworks>net6.0;net7.0;net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Authors>Nodirbek Abdulaxadov</Authors>
@@ -9,7 +9,7 @@
     <Description>High-performance GC-free cache powered by Rust and C# interop</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache</RepositoryUrl>
-    <Version>1.0.1</Version>
+    <Version>1.1.2</Version>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageReleaseNotes>add linux support</PackageReleaseNotes>
   </PropertyGroup>
