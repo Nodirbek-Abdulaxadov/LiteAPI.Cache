@@ -1,5 +1,17 @@
 using LiteAPI.Cache;
 
+if (args.Length > 0 && string.Equals(args[0], "phase1", StringComparison.OrdinalIgnoreCase))
+{
+    Phase1Verify.Run();
+    return;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "phase2", StringComparison.OrdinalIgnoreCase))
+{
+	Phase2Verify.Run();
+	return;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "bench", StringComparison.OrdinalIgnoreCase))
 {
 	Benchs.RunBenchmarks();

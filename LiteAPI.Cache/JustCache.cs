@@ -132,9 +132,20 @@ public static partial class JustCache
 
         byte[] result = new byte[(int)len];
         Marshal.Copy(ptr, result, 0, (int)len);
+        FreeNative(ptr, len);
+
+        JustCacheEventSource.Log.ReportGetHit(result.Length);
+        return result;
+    }
+
+    private static void FreeNative(IntPtr ptr, UIntPtr len)
+    {
         // Free the native buffer if cache_free exists (fallback for older DLLs)
         try
         {
+            if (ptr == IntPtr.Zero || len == UIntPtr.Zero)
+                return;
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 cache_free_win(ptr, len);
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -144,8 +155,16 @@ public static partial class JustCache
         }
         catch (EntryPointNotFoundException) { }
         catch (DllNotFoundException) { }
+    }
 
-        JustCacheEventSource.Log.ReportGetHit(result.Length);
+    private static byte[] CopyAndFree(IntPtr ptr, UIntPtr len)
+    {
+        if (ptr == IntPtr.Zero || len == UIntPtr.Zero)
+            return Array.Empty<byte>();
+
+        byte[] result = new byte[(int)len];
+        Marshal.Copy(ptr, result, 0, (int)len);
+        FreeNative(ptr, len);
         return result;
     }
 
