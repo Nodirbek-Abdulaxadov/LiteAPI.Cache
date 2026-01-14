@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::os::raw::{c_char, c_uchar};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,6 +18,18 @@ enum Value {
     List(Vec<Vec<u8>>),
     Set(HashSet<Vec<u8>>),
     SortedSet(HashMap<String, f64>), // Member -> Score
+    Stream(StreamData),
+}
+
+#[derive(Clone)]
+struct StreamEntry {
+    id: u64,
+    payload: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct StreamData {
+    entries: Vec<StreamEntry>,
 }
 
 #[derive(Clone)]
@@ -43,6 +55,8 @@ static CACHE: Lazy<RwLock<CacheState>> = Lazy::new(|| {
 
 static EXPIRY_THREAD_STARTED: OnceLock<()> = OnceLock::new();
 static AOF_FILE: Lazy<Mutex<Option<std::fs::File>>> = Lazy::new(|| Mutex::new(None));
+
+static STREAM_ID: AtomicU64 = AtomicU64::new(1);
 
 // Helper for string conversion
 unsafe fn to_string(ptr: *const c_char) -> String {
@@ -91,10 +105,22 @@ fn maybe_remove_if_expired(state: &mut CacheState, key: &String) -> bool {
     if let Some(entry) = state.map.peek(key) {
         if is_expired(entry) {
             state.map.pop(key);
+            notify_expired(key);
             return true;
         }
     }
     false
+}
+
+fn put_entry_with_lru(state: &mut CacheState, key: String, entry: Entry) {
+    // Capture eviction for keyspace notifications.
+    let cap = state.map.cap().get();
+    if !state.map.contains(&key) && state.map.len() >= cap {
+        if let Some((evicted_key, _evicted_entry)) = state.map.pop_lru() {
+            notify_evicted(&evicted_key);
+        }
+    }
+    state.map.put(key, entry);
 }
 
 fn start_expiry_thread_once() {
@@ -111,6 +137,7 @@ fn start_expiry_thread_once() {
             }
             for k in expired_keys {
                 state.map.pop(&k);
+                notify_expired(&k);
             }
         });
     });
@@ -126,6 +153,7 @@ const AOF_OP_HSET: u8 = 5;
 const AOF_OP_LPUSH: u8 = 6;
 const AOF_OP_SADD: u8 = 7;
 const AOF_OP_ZADD: u8 = 8;
+const AOF_OP_XADD: u8 = 9;
 
 fn aof_write(buf: &[u8]) {
     let mut guard = AOF_FILE.lock().unwrap();
@@ -208,6 +236,71 @@ fn aof_write_zadd(key: &str, score: f64, member: &str) {
     aof_write(&buf);
 }
 
+fn aof_write_xadd(key: &str, id: u64, payload: &[u8]) {
+    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 8 + 4 + payload.len());
+    buf.push(AOF_OP_XADD);
+    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    buf.extend_from_slice(key.as_bytes());
+    buf.extend_from_slice(&id.to_le_bytes());
+    buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    buf.extend_from_slice(payload);
+    aof_write(&buf);
+}
+
+// --- Phase3: Pub/Sub + Keyspace Notifications ---
+
+#[derive(Clone)]
+struct NotifyEvent {
+    kind: u8,
+    key: String,
+    at_ms: u64,
+}
+
+const NOTIFY_KIND_EXPIRED: u8 = 1;
+const NOTIFY_KIND_EVICTED: u8 = 2;
+
+static NOTIFY_QUEUE: Lazy<Mutex<VecDeque<NotifyEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
+
+fn notify_expired(key: &str) {
+    let mut q = NOTIFY_QUEUE.lock().unwrap();
+    q.push_back(NotifyEvent {
+        kind: NOTIFY_KIND_EXPIRED,
+        key: key.to_string(),
+        at_ms: now_ms(),
+    });
+}
+
+fn notify_evicted(key: &str) {
+    let mut q = NOTIFY_QUEUE.lock().unwrap();
+    q.push_back(NotifyEvent {
+        kind: NOTIFY_KIND_EVICTED,
+        key: key.to_string(),
+        at_ms: now_ms(),
+    });
+}
+
+#[derive(Clone)]
+struct PubMessage {
+    channel: String,
+    payload: Vec<u8>,
+}
+
+struct PubSubState {
+    next_id: u64,
+    subs: HashMap<u64, String>,
+    channels: HashMap<String, Vec<u64>>,
+    queues: HashMap<u64, VecDeque<PubMessage>>,
+}
+
+static PUBSUB: Lazy<Mutex<PubSubState>> = Lazy::new(|| {
+    Mutex::new(PubSubState {
+        next_id: 1,
+        subs: HashMap::new(),
+        channels: HashMap::new(),
+        queues: HashMap::new(),
+    })
+});
+
 fn read_exact_u8(r: &mut impl Read) -> Option<u8> {
     let mut b = [0u8; 1];
     r.read_exact(&mut b).ok()?;
@@ -244,7 +337,8 @@ fn read_exact_string(r: &mut impl Read, len: usize) -> Option<String> {
 }
 
 fn apply_set_internal(state: &mut CacheState, key: String, val: Vec<u8>) {
-    state.map.put(
+    put_entry_with_lru(
+        state,
         key,
         Entry {
             value: Value::Bytes(val),
@@ -268,7 +362,7 @@ fn apply_expire_internal(state: &mut CacheState, key: &String, ttl_ms: u64) -> b
     let Some(mut entry) = state.map.pop(key) else { return false; };
     let expires_at = now_ms().saturating_add(ttl_ms);
     entry.expires_at_ms = Some(expires_at);
-    state.map.put(key.clone(), entry);
+    put_entry_with_lru(state, key.clone(), entry);
     true
 }
 
@@ -368,7 +462,7 @@ pub extern "C" fn cache_hset(key: *const c_char, field: *const c_char, value: *c
         }
     }
 
-    state.map.put(key_str.clone(), entry);
+    put_entry_with_lru(&mut state, key_str.clone(), entry);
     aof_write_hset(&key_str, &field_str, &val_vec);
 }
 
@@ -446,7 +540,7 @@ pub extern "C" fn cache_lpush(key: *const c_char, value: *const c_uchar, len: us
         _ => entry.value = Value::List(vec![val_vec.clone()]),
     }
 
-    state.map.put(key_str.clone(), entry);
+    put_entry_with_lru(&mut state, key_str.clone(), entry);
     aof_write_lpush(&key_str, &val_vec);
 }
 
@@ -471,7 +565,7 @@ pub extern "C" fn cache_rpop(key: *const c_char, out_len: *mut usize) -> *mut c_
     }
 
     // Keep key if list still exists (even empty) to match current behavior
-    state.map.put(key_str, entry);
+    put_entry_with_lru(&mut state, key_str, entry);
 
     if let Some(val) = popped {
         return prepare_return(val, out_len);
@@ -548,7 +642,7 @@ pub extern "C" fn cache_sadd(key: *const c_char, value: *const c_uchar, len: usi
         }
     };
 
-    state.map.put(key_str.clone(), entry);
+    put_entry_with_lru(&mut state, key_str.clone(), entry);
     if inserted {
         aof_write_sadd(&key_str, &val_vec);
         1
@@ -603,7 +697,7 @@ pub extern "C" fn cache_zadd(key: *const c_char, score: f64, member: *const c_ch
         }
     }
 
-    state.map.put(key_str.clone(), entry);
+    put_entry_with_lru(&mut state, key_str.clone(), entry);
     aof_write_zadd(&key_str, score, &member_str);
 }
 
@@ -691,7 +785,8 @@ pub extern "C" fn cache_set_with_ttl(key: *const c_char, value: *const c_uchar, 
     let expires_at = now_ms().saturating_add(ttl_ms);
 
     let mut state = CACHE.write().unwrap();
-    state.map.put(
+    put_entry_with_lru(
+        &mut state,
         key_str.clone(),
         Entry {
             value: Value::Bytes(val_vec.clone()),
@@ -879,6 +974,27 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                 }
                 state.map.put(key, entry);
             }
+            AOF_OP_XADD => {
+                let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
+                let key = match read_exact_string(&mut file, klen) { Some(v) => v, None => break };
+                let id = match read_exact_u64(&mut file) { Some(v) => v, None => break };
+                let plen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
+                let payload = match read_exact_vec(&mut file, plen) { Some(v) => v, None => break };
+
+                let mut entry = state
+                    .map
+                    .pop(&key)
+                    .unwrap_or(Entry { value: Value::Stream(StreamData { entries: Vec::new() }), expires_at_ms: None });
+                match &mut entry.value {
+                    Value::Stream(stream) => {
+                        stream.entries.push(StreamEntry { id, payload });
+                    }
+                    _ => {
+                        entry.value = Value::Stream(StreamData { entries: vec![StreamEntry { id, payload }] });
+                    }
+                }
+                put_entry_with_lru(&mut state, key, entry);
+            }
             _ => break,
         }
     }
@@ -909,4 +1025,188 @@ pub extern "C" fn cache_remove_b(key: *const c_uchar, key_len: usize) {
     let mut state = CACHE.write().unwrap();
     apply_remove_internal(&mut state, &key_str);
     aof_write_remove(&key_str);
+}
+
+// --- Phase3: Pub/Sub ---
+
+#[no_mangle]
+pub extern "C" fn cache_pubsub_subscribe(channel: *const c_char) -> u64 {
+    let channel_str = unsafe { to_string(channel) };
+    if channel_str.is_empty() {
+        return 0;
+    }
+
+    let mut ps = PUBSUB.lock().unwrap();
+    let id = ps.next_id;
+    ps.next_id = ps.next_id.saturating_add(1);
+    ps.subs.insert(id, channel_str.clone());
+    ps.channels.entry(channel_str).or_default().push(id);
+    ps.queues.insert(id, VecDeque::new());
+    id
+}
+
+#[no_mangle]
+pub extern "C" fn cache_pubsub_unsubscribe(sub_id: u64) {
+    if sub_id == 0 {
+        return;
+    }
+
+    let mut ps = PUBSUB.lock().unwrap();
+    let Some(channel) = ps.subs.remove(&sub_id) else {
+        return;
+    };
+    if let Some(list) = ps.channels.get_mut(&channel) {
+        list.retain(|id| *id != sub_id);
+        if list.is_empty() {
+            ps.channels.remove(&channel);
+        }
+    }
+    ps.queues.remove(&sub_id);
+}
+
+#[no_mangle]
+pub extern "C" fn cache_pubsub_publish(channel: *const c_char, payload: *const c_uchar, len: usize) -> u64 {
+    let channel_str = unsafe { to_string(channel) };
+    if channel_str.is_empty() {
+        return 0;
+    }
+    let payload_vec = unsafe { to_bytes(payload, len) };
+
+    let mut ps = PUBSUB.lock().unwrap();
+    let Some(subs) = ps.channels.get(&channel_str) else {
+        return 0;
+    };
+    let subs = subs.clone();
+
+    let mut delivered = 0u64;
+    for id in subs.into_iter() {
+        if let Some(q) = ps.queues.get_mut(&id) {
+            q.push_back(PubMessage {
+                channel: channel_str.clone(),
+                payload: payload_vec.clone(),
+            });
+            delivered += 1;
+        }
+    }
+    delivered
+}
+
+#[no_mangle]
+pub extern "C" fn cache_pubsub_poll(sub_id: u64, out_len: *mut usize) -> *mut c_uchar {
+    if sub_id == 0 {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    }
+
+    let mut ps = PUBSUB.lock().unwrap();
+    let Some(q) = ps.queues.get_mut(&sub_id) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+    let Some(msg) = q.pop_front() else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(msg.channel.as_bytes().len() as u32).to_le_bytes());
+    buf.extend_from_slice(msg.channel.as_bytes());
+    buf.extend_from_slice(&(msg.payload.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&msg.payload);
+    prepare_return(buf, out_len)
+}
+
+// --- Phase3: Keyspace notifications polling ---
+
+#[no_mangle]
+pub extern "C" fn cache_notifications_poll(out_len: *mut usize) -> *mut c_uchar {
+    let mut q = NOTIFY_QUEUE.lock().unwrap();
+    let Some(ev) = q.pop_front() else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+    let mut buf = Vec::new();
+    buf.push(ev.kind);
+    buf.extend_from_slice(&(ev.key.as_bytes().len() as u32).to_le_bytes());
+    buf.extend_from_slice(ev.key.as_bytes());
+    buf.extend_from_slice(&ev.at_ms.to_le_bytes());
+    prepare_return(buf, out_len)
+}
+
+#[no_mangle]
+pub extern "C" fn cache_notifications_clear() {
+    let mut q = NOTIFY_QUEUE.lock().unwrap();
+    q.clear();
+}
+
+// --- Phase3: Streams ---
+
+#[no_mangle]
+pub extern "C" fn cache_xadd(key: *const c_char, payload: *const c_uchar, len: usize) -> u64 {
+    let key_str = unsafe { to_string(key) };
+    if key_str.is_empty() {
+        return 0;
+    }
+    let payload_vec = unsafe { to_bytes(payload, len) };
+
+    let id = STREAM_ID.fetch_add(1, Ordering::Relaxed);
+
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired(&mut state, &key_str) {
+        // create fresh
+    }
+
+    let mut entry = state
+        .map
+        .pop(&key_str)
+        .unwrap_or(Entry { value: Value::Stream(StreamData { entries: Vec::new() }), expires_at_ms: None });
+
+    match &mut entry.value {
+        Value::Stream(stream) => {
+            stream.entries.push(StreamEntry { id, payload: payload_vec.clone() });
+        }
+        _ => {
+            entry.value = Value::Stream(StreamData { entries: vec![StreamEntry { id, payload: payload_vec.clone() }] });
+        }
+    }
+
+    put_entry_with_lru(&mut state, key_str.clone(), entry);
+    aof_write_xadd(&key_str, id, &payload_vec);
+    id
+}
+
+#[no_mangle]
+pub extern "C" fn cache_xrange(key: *const c_char, start_id: u64, end_id: u64, out_len: *mut usize) -> *mut c_uchar {
+    let key_str = unsafe { to_string(key) };
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired(&mut state, &key_str) {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    }
+
+    let Some(entry) = state.map.get(&key_str) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let Value::Stream(stream) = &entry.value else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let mut items: Vec<&StreamEntry> = stream
+        .entries
+        .iter()
+        .filter(|e| e.id >= start_id && e.id <= end_id)
+        .collect();
+    items.sort_by_key(|e| e.id);
+
+    let mut flat = Vec::new();
+    flat.extend_from_slice(&(items.len() as u32).to_le_bytes());
+    for e in items {
+        flat.extend_from_slice(&e.id.to_le_bytes());
+        flat.extend_from_slice(&(e.payload.len() as u32).to_le_bytes());
+        flat.extend_from_slice(&e.payload);
+    }
+    prepare_return(flat, out_len)
 }

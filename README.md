@@ -15,6 +15,7 @@ JustCache is a high-performance memory cache system built to bypass .NET's garba
 - 💾 **Supports** strings, byte arrays, and JSON-serializable objects
 - 🧱 **Phase 1 (Core Redis types)**: Hashes, Lists, Sets, Sorted Sets
 - 🛡️ **Phase 2 (Reliability)**: LRU eviction, TTL + active expiry thread, AOF replay, binary-safe keys
+- 📣 **Phase 3 (Messaging)**: Pub/Sub, keyspace notifications, Streams
 - 🧩 **Interop via NativeAOT or P/Invoke**
 - 🛡️ **Safe memory management** without leaks
 
@@ -186,6 +187,66 @@ dotnet build -c Release
 cd TestApp/bin/Release/net9.0
 ./TestApp.exe phase1
 ./TestApp.exe phase2
+```
+
+---
+
+## 📣 Phase 3: Messaging & Events
+
+### Pub/Sub
+
+```csharp
+ulong sub = JustCache.Subscribe("orders");
+JustCache.PublishString("orders", "created:123");
+
+if (JustCache.TryPoll(sub, out var msg))
+{
+	Console.WriteLine(msg.Channel);
+	Console.WriteLine(msg.PayloadAsString());
+}
+
+JustCache.Unsubscribe(sub);
+```
+
+### Keyspace notifications (expired / evicted)
+
+```csharp
+JustCache.ClearNotifications();
+
+// cause an eviction
+JustCache.SetMaxItems(2);
+JustCache.SetString("k1", "1");
+JustCache.SetString("k2", "2");
+JustCache.SetString("k3", "3");
+
+while (JustCache.TryPollNotification(out var n))
+{
+	Console.WriteLine(n);
+}
+```
+
+### Streams (XADD / XRANGE)
+
+```csharp
+ulong id1 = JustCache.XAdd("stream:orders", Encoding.UTF8.GetBytes("a"));
+ulong id2 = JustCache.XAdd("stream:orders", Encoding.UTF8.GetBytes("b"));
+
+var items = JustCache.XRange("stream:orders", id1, id2);
+foreach (var it in items)
+	Console.WriteLine($"{it.Id} {Encoding.UTF8.GetString(it.Payload)}");
+```
+
+## ✅ Verifying Phase 3 (C#)
+
+```bash
+cd RustLib
+cargo build --release
+
+cd ..
+dotnet build -c Release
+
+cd TestApp/bin/Release/net9.0
+./TestApp.exe phase3
 ```
 
 ---
