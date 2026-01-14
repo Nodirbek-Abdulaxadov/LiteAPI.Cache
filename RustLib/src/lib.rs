@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::num::NonZeroUsize;
@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lru::LruCache;
 use once_cell::sync::Lazy;
+use serde_json::Value as JsonValue;
 
 // Define the Value enum to support multiple data structures
 #[derive(Clone)]
@@ -40,6 +41,8 @@ struct Entry {
 
 struct CacheState {
     map: LruCache<String, Entry>,
+    // Phase4: optional numeric secondary indexes for JSON (top-level fields)
+    numeric_indexes: HashMap<String, BTreeMap<i64, HashSet<String>>>,
 }
 
 const DEFAULT_MAX_ITEMS: usize = 100_000;
@@ -50,6 +53,7 @@ static CACHE: Lazy<RwLock<CacheState>> = Lazy::new(|| {
     let cap = NonZeroUsize::new(DEFAULT_MAX_ITEMS).unwrap();
     RwLock::new(CacheState {
         map: LruCache::new(cap),
+        numeric_indexes: HashMap::new(),
     })
 });
 
@@ -104,7 +108,9 @@ fn bytes_key_to_string(key_ptr: *const c_uchar, key_len: usize) -> String {
 fn maybe_remove_if_expired(state: &mut CacheState, key: &String) -> bool {
     if let Some(entry) = state.map.peek(key) {
         if is_expired(entry) {
-            state.map.pop(key);
+            if let Some(evicted) = state.map.pop(key) {
+                index_remove_for_entry(state, key, &evicted);
+            }
             notify_expired(key);
             return true;
         }
@@ -112,13 +118,70 @@ fn maybe_remove_if_expired(state: &mut CacheState, key: &String) -> bool {
     false
 }
 
+fn try_parse_json_from_entry(entry: &Entry) -> Option<JsonValue> {
+    let Value::Bytes(b) = &entry.value else { return None; };
+    serde_json::from_slice::<JsonValue>(b).ok()
+}
+
+fn extract_numeric_field(json: &JsonValue, field: &str) -> Option<i64> {
+    let obj = json.as_object()?;
+    let v = obj.get(field)?;
+    if let Some(i) = v.as_i64() {
+        return Some(i);
+    }
+    if let Some(u) = v.as_u64() {
+        return i64::try_from(u).ok();
+    }
+    None
+}
+
+fn index_remove_for_entry(state: &mut CacheState, key: &str, entry: &Entry) {
+    if state.numeric_indexes.is_empty() {
+        return;
+    }
+    let Some(json) = try_parse_json_from_entry(entry) else { return; };
+
+    for (field, idx) in state.numeric_indexes.iter_mut() {
+        if let Some(num) = extract_numeric_field(&json, field) {
+            if let Some(keys) = idx.get_mut(&num) {
+                keys.remove(key);
+                if keys.is_empty() {
+                    idx.remove(&num);
+                }
+            }
+        }
+    }
+}
+
+fn index_add_for_entry(state: &mut CacheState, key: &str, entry: &Entry) {
+    if state.numeric_indexes.is_empty() {
+        return;
+    }
+    let Some(json) = try_parse_json_from_entry(entry) else { return; };
+
+    for (field, idx) in state.numeric_indexes.iter_mut() {
+        if let Some(num) = extract_numeric_field(&json, field) {
+            idx.entry(num).or_default().insert(key.to_string());
+        }
+    }
+}
+
 fn put_entry_with_lru(state: &mut CacheState, key: String, entry: Entry) {
     // Capture eviction for keyspace notifications.
     let cap = state.map.cap().get();
     if !state.map.contains(&key) && state.map.len() >= cap {
-        if let Some((evicted_key, _evicted_entry)) = state.map.pop_lru() {
+        if let Some((evicted_key, evicted_entry)) = state.map.pop_lru() {
+            index_remove_for_entry(state, &evicted_key, &evicted_entry);
             notify_evicted(&evicted_key);
         }
+    }
+    // If overwriting an existing key, remove old index entries first.
+    if let Some(old) = state.map.pop(&key) {
+        index_remove_for_entry(state, &key, &old);
+    }
+
+    if !state.numeric_indexes.is_empty() {
+        index_add_for_entry(state, &key, &entry);
     }
     state.map.put(key, entry);
 }
@@ -348,11 +411,14 @@ fn apply_set_internal(state: &mut CacheState, key: String, val: Vec<u8>) {
 }
 
 fn apply_remove_internal(state: &mut CacheState, key: &String) {
-    state.map.pop(key);
+    if let Some(old) = state.map.pop(key) {
+        index_remove_for_entry(state, key, &old);
+    }
 }
 
 fn apply_clear_internal(state: &mut CacheState) {
     state.map.clear();
+    state.numeric_indexes.clear();
 }
 
 fn apply_expire_internal(state: &mut CacheState, key: &String, ttl_ms: u64) -> bool {
@@ -911,7 +977,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                         entry.value = Value::Hash(h);
                     }
                 }
-                state.map.put(key, entry);
+                put_entry_with_lru(&mut state, key, entry);
             }
             AOF_OP_LPUSH => {
                 let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
@@ -927,7 +993,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     Value::List(list) => list.insert(0, val),
                     _ => entry.value = Value::List(vec![val]),
                 }
-                state.map.put(key, entry);
+                put_entry_with_lru(&mut state, key, entry);
             }
             AOF_OP_SADD => {
                 let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
@@ -949,7 +1015,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                         entry.value = Value::Set(s);
                     }
                 }
-                state.map.put(key, entry);
+                put_entry_with_lru(&mut state, key, entry);
             }
             AOF_OP_ZADD => {
                 let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
@@ -972,7 +1038,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                         entry.value = Value::SortedSet(ss);
                     }
                 }
-                state.map.put(key, entry);
+                put_entry_with_lru(&mut state, key, entry);
             }
             AOF_OP_XADD => {
                 let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
@@ -1011,6 +1077,456 @@ pub extern "C" fn cache_set_b(key: *const c_uchar, key_len: usize, value: *const
     let mut state = CACHE.write().unwrap();
     apply_set_internal(&mut state, key_str.clone(), val_vec.clone());
     aof_write_set(&key_str, &val_vec);
+}
+
+// --- Phase4: JSON Path Support (basic) ---
+
+#[derive(Debug)]
+enum JsonPathToken {
+    Field(String),
+    Index(usize),
+}
+
+fn parse_json_path(path: &str) -> Option<Vec<JsonPathToken>> {
+    let p = path.trim();
+    if p.is_empty() {
+        return None;
+    }
+
+    let mut i = 0usize;
+    let chars: Vec<char> = p.chars().collect();
+
+    if chars.get(0) == Some(&'$') {
+        i += 1;
+    }
+
+    let mut tokens = Vec::new();
+
+    while i < chars.len() {
+        match chars[i] {
+            '.' => {
+                i += 1;
+                let start = i;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c == '.' || c == '[' {
+                        break;
+                    }
+                    i += 1;
+                }
+                if i == start {
+                    return None;
+                }
+                let field: String = chars[start..i].iter().collect();
+                tokens.push(JsonPathToken::Field(field));
+            }
+            '[' => {
+                i += 1;
+                let start = i;
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i == start || i >= chars.len() || chars[i] != ']' {
+                    return None;
+                }
+                let num_str: String = chars[start..i].iter().collect();
+                i += 1; // consume ']'
+                let idx = num_str.parse::<usize>().ok()?;
+                tokens.push(JsonPathToken::Index(idx));
+            }
+            _ => {
+                // allow path starting with field name without leading dot
+                let start = i;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c == '.' || c == '[' {
+                        break;
+                    }
+                    i += 1;
+                }
+                if i == start {
+                    return None;
+                }
+                let field: String = chars[start..i].iter().collect();
+                tokens.push(JsonPathToken::Field(field));
+            }
+        }
+    }
+
+    Some(tokens)
+}
+
+fn json_get_at_path<'a>(root: &'a JsonValue, path: &[JsonPathToken]) -> Option<&'a JsonValue> {
+    let mut cur = root;
+    for t in path {
+        match t {
+            JsonPathToken::Field(f) => {
+                cur = cur.get(f)?;
+            }
+            JsonPathToken::Index(idx) => {
+                cur = cur.get(*idx)?;
+            }
+        }
+    }
+    Some(cur)
+}
+
+fn json_set_at_path(root: &mut JsonValue, path: &[JsonPathToken], new_val: JsonValue) -> bool {
+    if path.is_empty() {
+        *root = new_val;
+        return true;
+    }
+
+    let mut cur = root;
+    for (pos, t) in path.iter().enumerate() {
+        let last = pos == path.len() - 1;
+        match t {
+            JsonPathToken::Field(f) => {
+                if last {
+                    if !cur.is_object() {
+                        *cur = JsonValue::Object(Default::default());
+                    }
+                    if let Some(obj) = cur.as_object_mut() {
+                        obj.insert(f.clone(), new_val);
+                        return true;
+                    }
+                    return false;
+                }
+
+                if !cur.is_object() {
+                    *cur = JsonValue::Object(Default::default());
+                }
+                let obj = cur.as_object_mut().unwrap();
+                cur = obj.entry(f.clone()).or_insert(JsonValue::Object(Default::default()));
+            }
+            JsonPathToken::Index(idx) => {
+                if !cur.is_array() {
+                    *cur = JsonValue::Array(Vec::new());
+                }
+                let arr = cur.as_array_mut().unwrap();
+                while arr.len() <= *idx {
+                    arr.push(JsonValue::Null);
+                }
+                if last {
+                    arr[*idx] = new_val;
+                    return true;
+                }
+                cur = &mut arr[*idx];
+            }
+        }
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn cache_json_get(key: *const c_char, path: *const c_char, out_len: *mut usize) -> *mut c_uchar {
+    let key_str = unsafe { to_string(key) };
+    let path_str = unsafe { to_string(path) };
+    let Some(tokens) = parse_json_path(&path_str) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired(&mut state, &key_str) {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    }
+
+    let Some(entry) = state.map.get(&key_str) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let Some(json) = try_parse_json_from_entry(entry) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let Some(v) = json_get_at_path(&json, &tokens) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let bytes = match serde_json::to_vec(v) {
+        Ok(b) => b,
+        Err(_) => {
+            unsafe { *out_len = 0 };
+            return std::ptr::null_mut();
+        }
+    };
+
+    prepare_return(bytes, out_len)
+}
+
+#[no_mangle]
+pub extern "C" fn cache_json_set(key: *const c_char, path: *const c_char, json_value: *const c_uchar, len: usize) -> i32 {
+    let key_str = unsafe { to_string(key) };
+    let path_str = unsafe { to_string(path) };
+    let Some(tokens) = parse_json_path(&path_str) else {
+        return 0;
+    };
+
+    let new_bytes = unsafe { to_bytes(json_value, len) };
+    let new_val: JsonValue = match serde_json::from_slice(&new_bytes) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired(&mut state, &key_str) {
+        // create fresh
+    }
+
+    let mut entry = state
+        .map
+        .pop(&key_str)
+        .unwrap_or(Entry { value: Value::Bytes(b"{}".to_vec()), expires_at_ms: None });
+
+    let mut json = try_parse_json_from_entry(&entry).unwrap_or(JsonValue::Object(Default::default()));
+    let ok = json_set_at_path(&mut json, &tokens, new_val);
+    if !ok {
+        // restore old entry
+        put_entry_with_lru(&mut state, key_str, entry);
+        return 0;
+    }
+
+    let updated_bytes = match serde_json::to_vec(&json) {
+        Ok(b) => b,
+        Err(_) => {
+            put_entry_with_lru(&mut state, key_str, entry);
+            return 0;
+        }
+    };
+
+    entry.value = Value::Bytes(updated_bytes.clone());
+    put_entry_with_lru(&mut state, key_str.clone(), entry);
+
+    // AOF logs as SET of the full updated JSON document.
+    aof_write_set(&key_str, &updated_bytes);
+    1
+}
+
+// --- Phase4: Secondary indexing + Find ---
+
+#[no_mangle]
+pub extern "C" fn cache_index_create_numeric(field: *const c_char) -> i32 {
+    let field_str = unsafe { to_string(field) };
+    if field_str.is_empty() {
+        return 0;
+    }
+
+    let mut state = CACHE.write().unwrap();
+    state.numeric_indexes.entry(field_str.clone()).or_insert_with(BTreeMap::new);
+
+    // rebuild this index from current state
+    let mut idx_map = BTreeMap::<i64, HashSet<String>>::new();
+    for (k, v) in state.map.iter() {
+        if let Some(json) = try_parse_json_from_entry(v) {
+            if let Some(num) = extract_numeric_field(&json, &field_str) {
+                idx_map.entry(num).or_default().insert(k.clone());
+            }
+        }
+    }
+    state.numeric_indexes.insert(field_str, idx_map);
+    1
+}
+
+fn parse_find_query(q: &str) -> Option<(String, String, String)> {
+    // very small grammar: <field> <op> <value>
+    // op: > >= < <= ==
+    let s = q.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    Some((parts[0].to_string(), parts[1].to_string(), parts[2..].join(" ")))
+}
+
+#[no_mangle]
+pub extern "C" fn cache_find(query: *const c_char, out_len: *mut usize) -> *mut c_uchar {
+    let query_str = unsafe { to_string(query) };
+    let Some((field, op, value_str)) = parse_find_query(&query_str) else {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    };
+
+    let value_num: Option<i64> = value_str.parse::<i64>().ok();
+    let mut keys: Vec<String> = Vec::new();
+
+    let state = CACHE.read().unwrap();
+
+    if let (Some(vnum), Some(idx)) = (value_num, state.numeric_indexes.get(&field)) {
+        match op.as_str() {
+            ">" => {
+                for (_k, set) in idx.range((vnum + 1)..) {
+                    keys.extend(set.iter().cloned());
+                }
+            }
+            ">=" => {
+                for (_k, set) in idx.range(vnum..) {
+                    keys.extend(set.iter().cloned());
+                }
+            }
+            "<" => {
+                for (_k, set) in idx.range(..vnum) {
+                    keys.extend(set.iter().cloned());
+                }
+            }
+            "<=" => {
+                for (_k, set) in idx.range(..=vnum) {
+                    keys.extend(set.iter().cloned());
+                }
+            }
+            "==" => {
+                if let Some(set) = idx.get(&vnum) {
+                    keys.extend(set.iter().cloned());
+                }
+            }
+            _ => {}
+        }
+    } else {
+        // fallback scan (only checks top-level numeric field in JSON bytes)
+        for (k, entry) in state.map.iter() {
+            if is_expired(entry) {
+                continue;
+            }
+            let Some(json) = try_parse_json_from_entry(entry) else { continue; };
+            let Some(num) = extract_numeric_field(&json, &field) else { continue; };
+            let ok = match (op.as_str(), value_num) {
+                (">", Some(v)) => num > v,
+                (">=", Some(v)) => num >= v,
+                ("<", Some(v)) => num < v,
+                ("<=", Some(v)) => num <= v,
+                ("==", Some(v)) => num == v,
+                _ => false,
+            };
+            if ok {
+                keys.push(k.clone());
+            }
+        }
+    }
+
+    // Serialize keys: [Count u32][KeyLen u32][Key bytes]...
+    let mut flat = Vec::new();
+    flat.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+    for k in keys {
+        let b = k.as_bytes();
+        flat.extend_from_slice(&(b.len() as u32).to_le_bytes());
+        flat.extend_from_slice(b);
+    }
+    prepare_return(flat, out_len)
+}
+
+// --- Phase4: Lightweight scripting (very small command set) ---
+
+#[no_mangle]
+pub extern "C" fn cache_eval(script: *const c_char, out_len: *mut usize) -> *mut c_uchar {
+    let s = unsafe { to_string(script) };
+    let s = s.trim();
+    if s.is_empty() {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    }
+
+    // Commands:
+    // GET <key>
+    // SET <key> <value...> (value is treated as UTF-8 bytes)
+    // DEL <key>
+    // JSON.GET <key> <path>
+    // JSON.SET <key> <path> <jsonValue>
+    let mut parts = s.split_whitespace();
+    let cmd = parts.next().unwrap_or("").to_uppercase();
+
+    match cmd.as_str() {
+        "GET" => {
+            let key = parts.next().unwrap_or("");
+            if key.is_empty() {
+                unsafe { *out_len = 0 };
+                return std::ptr::null_mut();
+            }
+            // reuse cache_get via CString
+            let ckey = std::ffi::CString::new(key).ok();
+            if let Some(ck) = ckey {
+                return cache_get(ck.as_ptr(), out_len);
+            }
+            unsafe { *out_len = 0 };
+            std::ptr::null_mut()
+        }
+        "SET" => {
+            let key = parts.next().unwrap_or("");
+            if key.is_empty() {
+                unsafe { *out_len = 0 };
+                return std::ptr::null_mut();
+            }
+            // remaining bytes after the key
+            let value_pos = s.find(key).unwrap_or(0) + key.len();
+            let value_str = s[value_pos..].trim();
+            let bytes = value_str.as_bytes().to_vec();
+            let mut state = CACHE.write().unwrap();
+            put_entry_with_lru(
+                &mut state,
+                key.to_string(),
+                Entry { value: Value::Bytes(bytes.clone()), expires_at_ms: None },
+            );
+            aof_write_set(key, &bytes);
+            prepare_return(b"OK".to_vec(), out_len)
+        }
+        "DEL" => {
+            let key = parts.next().unwrap_or("");
+            if key.is_empty() {
+                unsafe { *out_len = 0 };
+                return std::ptr::null_mut();
+            }
+            let mut state = CACHE.write().unwrap();
+            let existed = state.map.contains(&key.to_string());
+            apply_remove_internal(&mut state, &key.to_string());
+            aof_write_remove(key);
+            let out = if existed { b"1" } else { b"0" };
+            prepare_return(out.to_vec(), out_len)
+        }
+        "JSON.GET" => {
+            let key = parts.next().unwrap_or("");
+            let path = parts.next().unwrap_or("");
+            if key.is_empty() || path.is_empty() {
+                unsafe { *out_len = 0 };
+                return std::ptr::null_mut();
+            }
+            let ckey = std::ffi::CString::new(key).ok();
+            let cpath = std::ffi::CString::new(path).ok();
+            if let (Some(ck), Some(cp)) = (ckey, cpath) {
+                return cache_json_get(ck.as_ptr(), cp.as_ptr(), out_len);
+            }
+            unsafe { *out_len = 0 };
+            std::ptr::null_mut()
+        }
+        "JSON.SET" => {
+            let key = parts.next().unwrap_or("");
+            let path = parts.next().unwrap_or("");
+            if key.is_empty() || path.is_empty() {
+                unsafe { *out_len = 0 };
+                return std::ptr::null_mut();
+            }
+            // remaining after path
+            let path_pos = s.find(path).unwrap_or(0) + path.len();
+            let json_str = s[path_pos..].trim();
+            let ckey = std::ffi::CString::new(key).ok();
+            let cpath = std::ffi::CString::new(path).ok();
+            if let (Some(ck), Some(cp)) = (ckey, cpath) {
+                let ok = cache_json_set(ck.as_ptr(), cp.as_ptr(), json_str.as_ptr(), json_str.len());
+                let out = if ok != 0 { b"1" } else { b"0" };
+                return prepare_return(out.to_vec(), out_len);
+            }
+            prepare_return(b"0".to_vec(), out_len)
+        }
+        _ => {
+            unsafe { *out_len = 0 };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]

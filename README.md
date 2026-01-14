@@ -16,6 +16,7 @@ JustCache is a high-performance memory cache system built to bypass .NET's garba
 - 🧱 **Phase 1 (Core Redis types)**: Hashes, Lists, Sets, Sorted Sets
 - 🛡️ **Phase 2 (Reliability)**: LRU eviction, TTL + active expiry thread, AOF replay, binary-safe keys
 - 📣 **Phase 3 (Messaging)**: Pub/Sub, keyspace notifications, Streams
+- 🧭 **Phase 4 (Querying)**: JSON Path GET/SET, numeric secondary index + find, lightweight eval
 - 🧩 **Interop via NativeAOT or P/Invoke**
 - 🛡️ **Safe memory management** without leaks
 
@@ -247,6 +248,61 @@ dotnet build -c Release
 
 cd TestApp/bin/Release/net9.0
 ./TestApp.exe phase3
+```
+
+---
+
+## 🧭 Phase 4: Querying & Scripting
+
+Phase 4 adds basic querying features on top of JSON values stored as bytes.
+
+### JSON Path (GET / SET)
+
+```csharp
+JustCache.SetString("j:1", "{\"name\":\"a\",\"age\":10,\"tags\":[\"x\"]}");
+
+string? age = JustCache.JsonGetString("j:1", "$.age"); // "10"
+
+JustCache.JsonSet("j:1", "$.age", "11");
+JustCache.JsonSet("j:1", "$.tags[1]", "\"y\"");
+```
+
+Supported path tokens: `$`, `.field`, `[index]`.
+
+### Numeric secondary index + Find
+
+Create an index for a top-level numeric JSON field and query keys.
+
+```csharp
+JustCache.CreateNumericIndex("age");
+
+var keys = JustCache.FindKeys("age >= 18");
+foreach (var k in keys)
+	Console.WriteLine(k);
+```
+
+### Lightweight Eval
+
+```csharp
+JustCache.EvalString("SET e:k1 hello");   // "OK"
+JustCache.EvalString("GET e:k1");         // "hello"
+JustCache.EvalString("DEL e:k1");         // "1" or "0"
+
+JustCache.EvalString("JSON.SET e:j $.a 1");
+JustCache.EvalString("JSON.GET e:j $.a");
+```
+
+## ✅ Verifying Phase 4 (C#)
+
+```bash
+cd RustLib
+cargo build --release
+
+cd ..
+dotnet build -c Release
+
+cd TestApp/bin/Release/net9.0
+./TestApp.exe phase4
 ```
 
 ---

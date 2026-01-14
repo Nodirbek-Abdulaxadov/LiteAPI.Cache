@@ -18,6 +18,12 @@ if (args.Length > 0 && string.Equals(args[0], "phase3", StringComparison.Ordinal
 	return;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "phase4", StringComparison.OrdinalIgnoreCase))
+{
+	Phase4Verify.Run();
+	return;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "bench", StringComparison.OrdinalIgnoreCase))
 {
 	Benchs.RunBenchmarks();

@@ -362,6 +362,26 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
-/RustLib/target/
+# --- Rust ---
 
+# Cargo build output
+**/target/
+
+# Rust tooling / backups
+**/*.rs.bk
+
+# Project-specific
 /RustLib/Cargo.lock
+
+# If the Rust DLL/SO/DYLIB is copied into repo folders, keep it untracked
+rust_cache.dll
+librust_cache.so
+librust_cache.dylib
+
+# Windows import/lib artifacts sometimes copied alongside DLL
+rust_cache.dll.exp
+rust_cache.dll.lib
+
+# Rust metadata
+**/.rustc_info.json
+RustLib/target/.rustc_info.json
