@@ -1,0 +1,50 @@
+name: dotnet
+
+on:
+  pull_request:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    name: Build + Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest, macos-latest ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust (release)
+        working-directory: RustLib
+        shell: bash
+        run: cargo build --release
+
+      - name: Restore
+        run: dotnet restore "./LiteAPI.Cache.sln"
+
+      - name: Build
+        run: dotnet build "./LiteAPI.Cache.sln" --configuration Release --no-restore
+
+      - name: Verify Phase1
+        run: dotnet run --project "./TestApp/TestApp.csproj" -c Release -- phase1
+
+      - name: Verify Phase2
+        run: dotnet run --project "./TestApp/TestApp.csproj" -c Release -- phase2
+
+      - name: Verify Phase3
+        run: dotnet run --project "./TestApp/TestApp.csproj" -c Release -- phase3
+
+      - name: Verify Phase4
+        run: dotnet run --project "./TestApp/TestApp.csproj" -c Release -- phase4

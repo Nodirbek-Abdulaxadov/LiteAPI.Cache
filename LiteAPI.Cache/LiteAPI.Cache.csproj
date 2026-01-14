@@ -41,6 +41,10 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="runtimes/**" Pack="True" PackagePath="runtimes/" />
+  </ItemGroup>
+
   <!-- Auto-copy Rust artifacts into this project folder if they exist -->
   <Target Name="CopyRustArtifacts" BeforeTargets="Build">
     <Copy SourceFiles="..\RustLib\target\release\rust_cache.dll" DestinationFiles="$(MSBuildProjectDirectory)\rust_cache.dll" Condition="Exists('..\RustLib\target\release\rust_cache.dll')" />

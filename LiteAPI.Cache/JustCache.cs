@@ -24,9 +24,50 @@ public static partial class JustCache
 
     static JustCache()
     {
-        // Yuklash uchun to‘liq yo‘lni o‘rnatish (ixtiyoriy)
-        var libPath = Path.Combine(AppContext.BaseDirectory, GetLibraryName());
-        NativeLibrary.Load(libPath);
+        var libName = GetLibraryName();
+        var baseDir = AppContext.BaseDirectory;
+
+        // Prefer app-local deployment (e.g. TestApp output).
+        var directPath = Path.Combine(baseDir, libName);
+        if (File.Exists(directPath))
+        {
+            NativeLibrary.Load(directPath);
+            return;
+        }
+
+        // NuGet native assets are usually under runtimes/<rid>/native/.
+        var ridPath = Path.Combine(baseDir, "runtimes", GetRuntimeRid(), "native", libName);
+        if (File.Exists(ridPath))
+        {
+            NativeLibrary.Load(ridPath);
+            return;
+        }
+
+        // Last resort: rely on OS loader search paths.
+        if (NativeLibrary.TryLoad(libName, out _))
+            return;
+
+        throw new DllNotFoundException(
+            $"Unable to load native library '{libName}'. Looked in: '{directPath}' and '{ridPath}'.");
+    }
+
+    private static string GetRuntimeRid()
+    {
+        var arch = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            _ => throw new PlatformNotSupportedException($"Unsupported architecture: {RuntimeInformation.OSArchitecture}")
+        };
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return $"win-{arch}";
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return $"linux-{arch}";
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return $"osx-{arch}";
+
+        throw new PlatformNotSupportedException("Unknown OS");
     }
 
     #endregion
