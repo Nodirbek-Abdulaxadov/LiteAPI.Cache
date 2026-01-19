@@ -21,21 +21,24 @@
   <ItemGroup>
     <Content Include="rust_cache.dll" Condition="Exists('rust_cache.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>false</Pack>
     </Content>
     <Content Include="librust_cache.so" Condition="Exists('librust_cache.so')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>false</Pack>
     </Content>
     <Content Include="librust_cache.dylib" Condition="Exists('librust_cache.dylib')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>false</Pack>
     </Content>
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\LICENSE.txt">
+    <None Include="../LICENSE.txt">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Include="..\README.md">
+    <None Include="../README.md">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
@@ -47,9 +50,9 @@
 
   <!-- Auto-copy Rust artifacts into this project folder if they exist -->
   <Target Name="CopyRustArtifacts" BeforeTargets="Build">
-    <Copy SourceFiles="..\RustLib\target\release\rust_cache.dll" DestinationFiles="$(MSBuildProjectDirectory)\rust_cache.dll" Condition="Exists('..\RustLib\target\release\rust_cache.dll')" />
-    <Copy SourceFiles="..\RustLib\target\release\librust_cache.so" DestinationFiles="$(MSBuildProjectDirectory)\librust_cache.so" Condition="Exists('..\RustLib\target\release\librust_cache.so')" />
-    <Copy SourceFiles="..\RustLib\target\release\librust_cache.dylib" DestinationFiles="$(MSBuildProjectDirectory)\librust_cache.dylib" Condition="Exists('..\RustLib\target\release\librust_cache.dylib')" />
+    <Copy SourceFiles="../RustLib/target/release/rust_cache.dll" DestinationFiles="$(MSBuildProjectDirectory)/rust_cache.dll" Condition="Exists('../RustLib/target/release/rust_cache.dll')" />
+    <Copy SourceFiles="../RustLib/target/release/librust_cache.so" DestinationFiles="$(MSBuildProjectDirectory)/librust_cache.so" Condition="Exists('../RustLib/target/release/librust_cache.so')" />
+    <Copy SourceFiles="../RustLib/target/release/librust_cache.dylib" DestinationFiles="$(MSBuildProjectDirectory)/librust_cache.dylib" Condition="Exists('../RustLib/target/release/librust_cache.dylib')" />
   </Target>
 
 </Project>
