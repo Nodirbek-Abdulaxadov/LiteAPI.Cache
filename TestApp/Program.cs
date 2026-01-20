@@ -1,62 +1,15 @@
 using LiteAPI.Cache;
 
-if (args.Length > 0 && string.Equals(args[0], "phase1", StringComparison.OrdinalIgnoreCase))
-{
-    Phase1Verify.Run();
-    return;
-}
-
-if (args.Length > 0 && string.Equals(args[0], "phase2", StringComparison.OrdinalIgnoreCase))
-{
-	Phase2Verify.Run();
-	return;
-}
-
-if (args.Length > 0 && string.Equals(args[0], "phase3", StringComparison.OrdinalIgnoreCase))
-{
-	Phase3Verify.Run();
-	return;
-}
-
-if (args.Length > 0 && string.Equals(args[0], "phase4", StringComparison.OrdinalIgnoreCase))
-{
-	Phase4Verify.Run();
-	return;
-}
-
-if (args.Length > 0 && string.Equals(args[0], "bench", StringComparison.OrdinalIgnoreCase))
-{
-	Benchs.RunBenchmarks();
-	return;
-}
-
-if (args.Length > 0 && string.Equals(args[0], "concurrency", StringComparison.OrdinalIgnoreCase))
-{
-	var results = ConcurrencyTest.Start();
-	foreach (var (title, setElapsed, getElapsed) in results)
-	{
-		Console.WriteLine($"{title} | set:{setElapsed} get:{getElapsed}");
-	}
-	return;
-}
-
-string key = "example_key";
-Student student = Student.Random(1);
-
-// Initialize the cache and perform operations
 JustCache.Initialize();
 
-// Set an object in the cache
-JustCache.SetObject(key, student);
+JustCache.SetString("hello", "world");
+Console.WriteLine($"hello -> {JustCache.GetString("hello")}");
 
-// Retrieve the object from the cache
-student = JustCache.GetObject<Student>(key) ?? Student.Random(2);
+JustCache.SetStringWithTtl("temp", "value", TimeSpan.FromMilliseconds(300));
+Console.WriteLine($"temp ttl (ms) -> {JustCache.TtlMs("temp")}");
 
-// Display the retrieved object
-Console.WriteLine(student);
+JustCache.Remove("hello");
+Console.WriteLine($"hello removed -> {JustCache.GetString("hello") ?? "<null>"}");
 
-// Remove the object from the cache
-JustCache.Remove(key);
-
-// Clear all cached objects
 JustCache.ClearAll();
+Console.WriteLine("done");

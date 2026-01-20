@@ -1,332 +1,37 @@
-# LiteAPI.Cache - JustCache
+# LiteAPI.Cache (JustCache)
 
-**GC-free, cross-platform in-memory cache for .NET backed by Rust.**
+Fast, GC-free, cross-platform in-memory cache for .NET backed by Rust.
 
-JustCache is a high-performance memory cache system built to bypass .NET's garbage collector by leveraging native Rust memory management. Designed for low-latency, high-throughput scenarios where predictability and performance are essential.
-
----
-
-## 🚀 Key Features
-
-- ⚡ **GC-Free**: No garbage collection pressure in .NET
-- 🧠 **Native performance** using Rust under the hood
-- 💼 **Cross-platform**: Supports Windows, Linux, and macOS
-- 🔒 **Thread-safe** read/write access
-- 💾 **Supports** strings, byte arrays, and JSON-serializable objects
-- 🧱 **Phase 1 (Core Redis types)**: Hashes, Lists, Sets, Sorted Sets
-- 🛡️ **Phase 2 (Reliability)**: LRU eviction, TTL + active expiry thread, AOF replay, binary-safe keys
-- 📣 **Phase 3 (Messaging)**: Pub/Sub, keyspace notifications, Streams
-- 🧭 **Phase 4 (Querying)**: JSON Path GET/SET, numeric secondary index + find, lightweight eval
-- 🧩 **Interop via NativeAOT or P/Invoke**
-- 🛡️ **Safe memory management** without leaks
-
----
-
-## 📦 Installation
-
-Install the NuGet package:
+## Install
 
 ```bash
 dotnet add package LiteAPI.Cache
 ```
 
+> Requires a precompiled native Rust library. Build RustLib or use packaged runtimes.
 
-> 🔧 Requires a precompiled native Rust dynamic library. See the documentation or [GitHub repository](https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache) for details.
-
----
-
-## ⚙️ Usage
-
-- **Initialize the cache** at application startup
-- **Set/Get** data by key (supports string, bytes, and object types)
-- **Remove** individual keys or **clear all**
-- **Interop with Rust** is handled internally—no manual marshaling needed
+## Quick start
 
 ```csharp
 using LiteAPI.Cache;
 
-string key = "example_key";
-Student student = Student.Random(1);
-
-// Initialize the cache and perform operations
 JustCache.Initialize();
 
-// Set an object in the cache
-JustCache.SetObject(key, student);
+JustCache.SetString("hello", "world");
+Console.WriteLine(JustCache.GetString("hello"));
 
-// Retrieve the object from the cache
-student = JustCache.GetObject<Student>(key) ?? Student.Random(2);
+JustCache.SetStringWithTtl("temp", "value", TimeSpan.FromSeconds(1));
+Console.WriteLine(JustCache.TtlMs("temp"));
 
-// Display the retrieved object
-Console.WriteLine(student);
-
-// Remove the object from the cache
-JustCache.Remove(key);
-
-// Clear all cached objects
+JustCache.Remove("hello");
 JustCache.ClearAll();
 ```
 
----
+## Notes
 
-## 🧱 Phase 1: Rich Data Structures (Core Redis)
+- Native library is required at runtime.
+- Full documentation will live in a separate docs project.
 
-Phase 1 adds Redis-like data structures implemented in Rust and exposed via the C# `JustCache` API.
-
-### Hashes (`HSET`, `HGET`, `HGETALL`)
-
-```csharp
-JustCache.HSetString("user:1", "name", "Alice");
-JustCache.HSetString("user:1", "city", "Tashkent");
-
-string? name = JustCache.HGetString("user:1", "name");
-var all = JustCache.HGetAll("user:1"); // Dictionary<string, byte[]>
-```
-
-### Lists (`LPUSH`, `RPOP`, `LRANGE`)
-
-```csharp
-JustCache.LPushString("recent", "a");
-JustCache.LPushString("recent", "b");
-
-List<string> items = JustCache.LRangeStrings("recent", 0, -1);
-string? last = JustCache.RPopString("recent");
-```
-
-### Sets (`SADD`, `SISMEMBER`)
-
-```csharp
-bool added = JustCache.SAddString("tags", "x");
-bool isMember = JustCache.SIsMemberString("tags", "x");
-```
-
-### Sorted Sets (`ZADD`, `ZRANGE`)
-
-```csharp
-JustCache.ZAdd("leaderboard", 5, "alice");
-JustCache.ZAdd("leaderboard", 10, "bob");
-
-List<string> members = JustCache.ZRange("leaderboard", 0, -1);
-```
-
----
-
-## 🛡️ Phase 2: Reliability & Advanced Persistence
-
-Phase 2 focuses on predictable memory usage, better expiry behavior, and crash recovery.
-
-### LRU eviction
-
-Configure a maximum number of items; least-recently-used entries are evicted when capacity is exceeded.
-
-```csharp
-JustCache.SetMaxItems(100_000);
-int current = JustCache.Count;
-```
-
-### TTL + active expiry
-
-Keys can be written with TTL or updated with expiry. The Rust side runs a small background thread to proactively remove expired entries.
-
-```csharp
-JustCache.SetStringWithTtl("session:1", "value", TimeSpan.FromSeconds(10));
-bool ok = JustCache.Expire("session:1", TimeSpan.FromSeconds(5));
-
-// Redis-like TTL semantics:
-// -2: key does not exist
-// -1: no expiry
-// >=0: milliseconds remaining
-long ttlMs = JustCache.TtlMs("session:1");
-```
-
-### AOF (Append Only File) replay
-
-Enable AOF logging to a file, then replay it to rebuild state after a crash/restart.
-
-```csharp
-JustCache.EnableAof("./justcache.aof");
-JustCache.SetString("aof:k1", "1");
-JustCache.DisableAof();
-
-JustCache.ClearAll();
-JustCache.LoadAof("./justcache.aof");
-```
-
-### Binary-safe keys
-
-Use `byte[]` keys (in addition to string keys), similar to Redis.
-
-```csharp
-byte[] key = new byte[] { 0, 1, 2, 255 };
-JustCache.Set(key, System.Text.Encoding.UTF8.GetBytes("bin"));
-byte[]? val = JustCache.Get(key);
-JustCache.Remove(key);
-```
-
----
-
-## ✅ Verifying Phase 1 / Phase 2 (C#)
-
-The repository includes small runners in `TestApp` to validate Rust + P/Invoke interop.
-
-1) Build the Rust native library:
-
-```bash
-cd RustLib
-cargo build --release
-```
-
-2) Build the .NET solution (copies the native artifact into outputs):
-
-```bash
-dotnet build -c Release
-```
-
-3) Run verification:
-
-```bash
-cd TestApp/bin/Release/net9.0
-./TestApp.exe phase1
-./TestApp.exe phase2
-```
-
----
-
-## 📣 Phase 3: Messaging & Events
-
-### Pub/Sub
-
-```csharp
-ulong sub = JustCache.Subscribe("orders");
-JustCache.PublishString("orders", "created:123");
-
-if (JustCache.TryPoll(sub, out var msg))
-{
-	Console.WriteLine(msg.Channel);
-	Console.WriteLine(msg.PayloadAsString());
-}
-
-JustCache.Unsubscribe(sub);
-```
-
-### Keyspace notifications (expired / evicted)
-
-```csharp
-JustCache.ClearNotifications();
-
-// cause an eviction
-JustCache.SetMaxItems(2);
-JustCache.SetString("k1", "1");
-JustCache.SetString("k2", "2");
-JustCache.SetString("k3", "3");
-
-while (JustCache.TryPollNotification(out var n))
-{
-	Console.WriteLine(n);
-}
-```
-
-### Streams (XADD / XRANGE)
-
-```csharp
-ulong id1 = JustCache.XAdd("stream:orders", Encoding.UTF8.GetBytes("a"));
-ulong id2 = JustCache.XAdd("stream:orders", Encoding.UTF8.GetBytes("b"));
-
-var items = JustCache.XRange("stream:orders", id1, id2);
-foreach (var it in items)
-	Console.WriteLine($"{it.Id} {Encoding.UTF8.GetString(it.Payload)}");
-```
-
-## ✅ Verifying Phase 3 (C#)
-
-```bash
-cd RustLib
-cargo build --release
-
-cd ..
-dotnet build -c Release
-
-cd TestApp/bin/Release/net9.0
-./TestApp.exe phase3
-```
-
----
-
-## 🧭 Phase 4: Querying & Scripting
-
-Phase 4 adds basic querying features on top of JSON values stored as bytes.
-
-### JSON Path (GET / SET)
-
-```csharp
-JustCache.SetString("j:1", "{\"name\":\"a\",\"age\":10,\"tags\":[\"x\"]}");
-
-string? age = JustCache.JsonGetString("j:1", "$.age"); // "10"
-
-JustCache.JsonSet("j:1", "$.age", "11");
-JustCache.JsonSet("j:1", "$.tags[1]", "\"y\"");
-```
-
-Supported path tokens: `$`, `.field`, `[index]`.
-
-### Numeric secondary index + Find
-
-Create an index for a top-level numeric JSON field and query keys.
-
-```csharp
-JustCache.CreateNumericIndex("age");
-
-var keys = JustCache.FindKeys("age >= 18");
-foreach (var k in keys)
-	Console.WriteLine(k);
-```
-
-### Lightweight Eval
-
-```csharp
-JustCache.EvalString("SET e:k1 hello");   // "OK"
-JustCache.EvalString("GET e:k1");         // "hello"
-JustCache.EvalString("DEL e:k1");         // "1" or "0"
-
-JustCache.EvalString("JSON.SET e:j $.a 1");
-JustCache.EvalString("JSON.GET e:j $.a");
-```
-
-## ✅ Verifying Phase 4 (C#)
-
-```bash
-cd RustLib
-cargo build --release
-
-cd ..
-dotnet build -c Release
-
-cd TestApp/bin/Release/net9.0
-./TestApp.exe phase4
-```
-
----
-
-## 🧠 Why JustCache?
-
-- 🚀 Ultra-fast native cache access
-- ✅ No impact on .NET GC or memory fragmentation
-- 🧩 Drop-in utility for microservices, real-time systems, or edge apps
-- 🔍 Useful for caching config, lookup tables, auth sessions, and more
-
----
-
-## 🪪 License
+## License
 
 MIT License © 2025 LiteAPI
-
----
-
-## 💬 Feedback
-
-Found a bug or want a feature? Open an issue or PR on [GitHub](https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache).
-
-
-## 🛠️ Contributing
-
-We welcome contributions! Please see the [CONTRIBUTING.md](https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache/CONTRIBUTING.md) for guidelines.

@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LiteAPI.Cache", "LiteAPI.Ca
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestApp", "TestApp\TestApp.csproj", "{A0A5516F-CF94-4F6B-6308-242CCA1A71A5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LiteAPI.Cache.IntegrationTests", "LiteAPI.Cache.IntegrationTests\LiteAPI.Cache.IntegrationTests.csproj", "{A64F4B94-7BAF-4A1C-8D7D-5B0B9FD1F6D2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,6 +22,10 @@ Global
 		{A0A5516F-CF94-4F6B-6308-242CCA1A71A5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A0A5516F-CF94-4F6B-6308-242CCA1A71A5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A0A5516F-CF94-4F6B-6308-242CCA1A71A5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A64F4B94-7BAF-4A1C-8D7D-5B0B9FD1F6D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A64F4B94-7BAF-4A1C-8D7D-5B0B9FD1F6D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A64F4B94-7BAF-4A1C-8D7D-5B0B9FD1F6D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A64F4B94-7BAF-4A1C-8D7D-5B0B9FD1F6D2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

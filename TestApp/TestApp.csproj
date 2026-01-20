@@ -8,10 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="StackExchange.Redis" Version="2.8.58" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\LiteAPI.Cache\LiteAPI.Cache.csproj" />
   </ItemGroup>
 
