@@ -58,6 +58,9 @@ dlldata.c
 # Benchmark Results
 BenchmarkDotNet.Artifacts/
 
+# Rust build outputs
+RustLib/target/
+
 # .NET Core
 project.lock.json
 project.fragment.lock.json

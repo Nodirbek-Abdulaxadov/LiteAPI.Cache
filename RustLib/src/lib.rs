@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::os::raw::{c_char, c_uchar};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lru::LruCache;
@@ -14,7 +14,7 @@ use serde_json::Value as JsonValue;
 // Define the Value enum to support multiple data structures
 #[derive(Clone)]
 enum Value {
-    Bytes(Vec<u8>),
+    Bytes(Arc<Vec<u8>>),
     Hash(HashMap<String, Vec<u8>>),
     List(Vec<Vec<u8>>),
     Set(HashSet<Vec<u8>>),
@@ -41,6 +41,7 @@ struct Entry {
 
 struct CacheState {
     map: LruCache<String, Entry>,
+    map_b: LruCache<Vec<u8>, Entry>,
     // Phase4: optional numeric secondary indexes for JSON (top-level fields)
     numeric_indexes: HashMap<String, BTreeMap<i64, HashSet<String>>>,
 }
@@ -53,6 +54,7 @@ static CACHE: Lazy<RwLock<CacheState>> = Lazy::new(|| {
     let cap = NonZeroUsize::new(DEFAULT_MAX_ITEMS).unwrap();
     RwLock::new(CacheState {
         map: LruCache::new(cap),
+        map_b: LruCache::new(cap),
         numeric_indexes: HashMap::new(),
     })
 });
@@ -91,11 +93,10 @@ fn is_expired(entry: &Entry) -> bool {
     }
 }
 
-fn bytes_key_to_string(key_ptr: *const c_uchar, key_len: usize) -> String {
-    if key_ptr.is_null() || key_len == 0 {
+fn bytes_to_hex_key(key_bytes: &[u8]) -> String {
+    if key_bytes.is_empty() {
         return String::new();
     }
-    let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr, key_len) };
     let mut s = String::with_capacity(2 + key_bytes.len() * 2);
     s.push_str("b:");
     for b in key_bytes {
@@ -103,6 +104,14 @@ fn bytes_key_to_string(key_ptr: *const c_uchar, key_len: usize) -> String {
         let _ = write!(&mut s, "{:02x}", b);
     }
     s
+}
+
+fn bytes_key_to_string(key_ptr: *const c_uchar, key_len: usize) -> String {
+    if key_ptr.is_null() || key_len == 0 {
+        return String::new();
+    }
+    let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr, key_len) };
+    bytes_to_hex_key(key_bytes)
 }
 
 fn maybe_remove_if_expired(state: &mut CacheState, key: &String) -> bool {
@@ -118,9 +127,22 @@ fn maybe_remove_if_expired(state: &mut CacheState, key: &String) -> bool {
     false
 }
 
+fn maybe_remove_if_expired_b(state: &mut CacheState, key: &Vec<u8>) -> bool {
+    if let Some(entry) = state.map_b.peek(key) {
+        if is_expired(entry) {
+            let _ = state.map_b.pop(key);
+            // Preserve historical notification key formatting for binary keys.
+            let key_str = bytes_to_hex_key(key);
+            notify_expired(&key_str);
+            return true;
+        }
+    }
+    false
+}
+
 fn try_parse_json_from_entry(entry: &Entry) -> Option<JsonValue> {
     let Value::Bytes(b) = &entry.value else { return None; };
-    serde_json::from_slice::<JsonValue>(b).ok()
+    serde_json::from_slice::<JsonValue>(b.as_slice()).ok()
 }
 
 fn extract_numeric_field(json: &JsonValue, field: &str) -> Option<i64> {
@@ -186,6 +208,19 @@ fn put_entry_with_lru(state: &mut CacheState, key: String, entry: Entry) {
     state.map.put(key, entry);
 }
 
+fn put_entry_with_lru_b(state: &mut CacheState, key: Vec<u8>, entry: Entry) {
+    // Capture eviction for keyspace notifications.
+    let cap = state.map_b.cap().get();
+    if !state.map_b.contains(&key) && state.map_b.len() >= cap {
+        if let Some((evicted_key, _evicted_entry)) = state.map_b.pop_lru() {
+            let evicted_key_str = bytes_to_hex_key(&evicted_key);
+            notify_evicted(&evicted_key_str);
+        }
+    }
+    let _ = state.map_b.pop(&key);
+    state.map_b.put(key, entry);
+}
+
 fn start_expiry_thread_once() {
     let _ = EXPIRY_THREAD_STARTED.get_or_init(|| {
         std::thread::spawn(|| loop {
@@ -202,6 +237,18 @@ fn start_expiry_thread_once() {
                 state.map.pop(&k);
                 notify_expired(&k);
             }
+
+            let mut expired_keys_b: Vec<Vec<u8>> = Vec::new();
+            for (k, v) in state.map_b.iter() {
+                if is_expired(v) {
+                    expired_keys_b.push(k.clone());
+                }
+            }
+            for k in expired_keys_b {
+                state.map_b.pop(&k);
+                let key_str = bytes_to_hex_key(&k);
+                notify_expired(&key_str);
+            }
         });
     });
 }
@@ -217,6 +264,10 @@ const AOF_OP_LPUSH: u8 = 6;
 const AOF_OP_SADD: u8 = 7;
 const AOF_OP_ZADD: u8 = 8;
 const AOF_OP_XADD: u8 = 9;
+
+// Binary-key variants (avoid encoding key bytes into strings)
+const AOF_OP_SET_B: u8 = 10;
+const AOF_OP_REMOVE_B: u8 = 11;
 
 fn aof_write(buf: &[u8]) {
     let mut guard = AOF_FILE.lock().unwrap();
@@ -235,11 +286,29 @@ fn aof_write_set(key: &str, val: &[u8]) {
     aof_write(&buf);
 }
 
+fn aof_write_set_b(key: &[u8], val: &[u8]) {
+    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 4 + val.len());
+    buf.push(AOF_OP_SET_B);
+    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    buf.extend_from_slice(key);
+    buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
+    buf.extend_from_slice(val);
+    aof_write(&buf);
+}
+
 fn aof_write_remove(key: &str) {
     let mut buf = Vec::with_capacity(1 + 4 + key.len());
     buf.push(AOF_OP_REMOVE);
     buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
     buf.extend_from_slice(key.as_bytes());
+    aof_write(&buf);
+}
+
+fn aof_write_remove_b(key: &[u8]) {
+    let mut buf = Vec::with_capacity(1 + 4 + key.len());
+    buf.push(AOF_OP_REMOVE_B);
+    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    buf.extend_from_slice(key);
     aof_write(&buf);
 }
 
@@ -404,7 +473,18 @@ fn apply_set_internal(state: &mut CacheState, key: String, val: Vec<u8>) {
         state,
         key,
         Entry {
-            value: Value::Bytes(val),
+            value: Value::Bytes(Arc::new(val)),
+            expires_at_ms: None,
+        },
+    );
+}
+
+fn apply_set_internal_b(state: &mut CacheState, key: Vec<u8>, val: Vec<u8>) {
+    put_entry_with_lru_b(
+        state,
+        key,
+        Entry {
+            value: Value::Bytes(Arc::new(val)),
             expires_at_ms: None,
         },
     );
@@ -416,8 +496,13 @@ fn apply_remove_internal(state: &mut CacheState, key: &String) {
     }
 }
 
+fn apply_remove_internal_b(state: &mut CacheState, key: &Vec<u8>) {
+    let _ = state.map_b.pop(key);
+}
+
 fn apply_clear_internal(state: &mut CacheState) {
     state.map.clear();
+    state.map_b.clear();
     state.numeric_indexes.clear();
 }
 
@@ -474,9 +559,10 @@ pub extern "C" fn cache_clear_all() {
 pub extern "C" fn cache_set(key: *const c_char, value: *const c_uchar, len: usize) {
     let key_str = unsafe { to_string(key) };
     let val_vec = unsafe { to_bytes(value, len) };
-    let mut state = CACHE.write().unwrap();
-    apply_set_internal(&mut state, key_str.clone(), val_vec.clone());
+    // Write AOF without holding the cache lock.
     aof_write_set(&key_str, &val_vec);
+    let mut state = CACHE.write().unwrap();
+    apply_set_internal(&mut state, key_str, val_vec);
 }
 
 #[no_mangle]
@@ -491,12 +577,53 @@ pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *mut c_u
 
     if let Some(entry) = state.map.get(&key_str) {
         if let Value::Bytes(val) = &entry.value {
-            return prepare_return(val.clone(), out_len);
+            return prepare_return((**val).clone(), out_len);
         }
     }
     
     unsafe { *out_len = 0 };
     std::ptr::null_mut()
+}
+
+// Copy value bytes into a caller-provided buffer.
+// Return semantics:
+//  -1  => key missing (or expired)
+//  <0  => buffer too small; required length is -ret
+//  >0  => bytes written
+//   0  => value exists but is empty
+#[no_mangle]
+pub extern "C" fn cache_get_into(key: *const c_char, dst: *mut c_uchar, dst_len: usize) -> i64 {
+    let key_str = unsafe { to_string(key) };
+    if key_str.is_empty() {
+        return -1;
+    }
+
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired(&mut state, &key_str) {
+        return -1;
+    }
+
+    let Some(entry) = state.map.get(&key_str) else {
+        return -1;
+    };
+
+    let Value::Bytes(val) = &entry.value else {
+        return -1;
+    };
+
+    let value_len = val.len();
+    if value_len == 0 {
+        return 0;
+    }
+
+    if dst.is_null() || dst_len < value_len {
+        return -(value_len as i64);
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(val.as_ptr(), dst, value_len);
+    }
+    value_len as i64
 }
 
 // --- Hashes ---
@@ -831,6 +958,7 @@ pub extern "C" fn cache_set_max_items(max_items: usize) {
     MAX_ITEMS.store(max_items, Ordering::Relaxed);
     let mut state = CACHE.write().unwrap();
     state.map.resize(NonZeroUsize::new(max_items).unwrap());
+    state.map_b.resize(NonZeroUsize::new(max_items).unwrap());
 }
 
 #[no_mangle]
@@ -841,7 +969,7 @@ pub extern "C" fn cache_get_max_items() -> usize {
 #[no_mangle]
 pub extern "C" fn cache_len() -> usize {
     let state = CACHE.read().unwrap();
-    state.map.len()
+    state.map.len() + state.map_b.len()
 }
 
 #[no_mangle]
@@ -855,7 +983,7 @@ pub extern "C" fn cache_set_with_ttl(key: *const c_char, value: *const c_uchar, 
         &mut state,
         key_str.clone(),
         Entry {
-            value: Value::Bytes(val_vec.clone()),
+            value: Value::Bytes(Arc::new(val_vec.clone())),
             expires_at_ms: Some(expires_at),
         },
     );
@@ -941,10 +1069,22 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                 let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
                 apply_set_internal(&mut state, key, val);
             }
+            AOF_OP_SET_B => {
+                let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
+                let key = match read_exact_vec(&mut file, klen) { Some(v) => v, None => break };
+                let vlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
+                let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
+                apply_set_internal_b(&mut state, key, val);
+            }
             AOF_OP_REMOVE => {
                 let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                 let key = match read_exact_string(&mut file, klen) { Some(v) => v, None => break };
                 apply_remove_internal(&mut state, &key);
+            }
+            AOF_OP_REMOVE_B => {
+                let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
+                let key = match read_exact_vec(&mut file, klen) { Some(v) => v, None => break };
+                apply_remove_internal_b(&mut state, &key);
             }
             AOF_OP_CLEAR => {
                 apply_clear_internal(&mut state);
@@ -1068,15 +1208,16 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
     1
 }
 
-// Binary-safe keys: key bytes are encoded to a stable internal string key.
+// Binary keys (byte-for-byte): stored separately to avoid key encoding overhead.
 
 #[no_mangle]
 pub extern "C" fn cache_set_b(key: *const c_uchar, key_len: usize, value: *const c_uchar, len: usize) {
-    let key_str = bytes_key_to_string(key, key_len);
+    let key_vec = unsafe { to_bytes(key, key_len) };
     let val_vec = unsafe { to_bytes(value, len) };
+    // Write AOF without holding the cache lock.
+    aof_write_set_b(&key_vec, &val_vec);
     let mut state = CACHE.write().unwrap();
-    apply_set_internal(&mut state, key_str.clone(), val_vec.clone());
-    aof_write_set(&key_str, &val_vec);
+    apply_set_internal_b(&mut state, key_vec, val_vec);
 }
 
 // --- Phase4: JSON Path Support (basic) ---
@@ -1281,7 +1422,7 @@ pub extern "C" fn cache_json_set(key: *const c_char, path: *const c_char, json_v
     let mut entry = state
         .map
         .pop(&key_str)
-        .unwrap_or(Entry { value: Value::Bytes(b"{}".to_vec()), expires_at_ms: None });
+        .unwrap_or(Entry { value: Value::Bytes(Arc::new(b"{}".to_vec())), expires_at_ms: None });
 
     let mut json = try_parse_json_from_entry(&entry).unwrap_or(JsonValue::Object(Default::default()));
     let ok = json_set_at_path(&mut json, &tokens, new_val);
@@ -1299,7 +1440,7 @@ pub extern "C" fn cache_json_set(key: *const c_char, path: *const c_char, json_v
         }
     };
 
-    entry.value = Value::Bytes(updated_bytes.clone());
+    entry.value = Value::Bytes(Arc::new(updated_bytes.clone()));
     put_entry_with_lru(&mut state, key_str.clone(), entry);
 
     // AOF logs as SET of the full updated JSON document.
@@ -1470,7 +1611,7 @@ pub extern "C" fn cache_eval(script: *const c_char, out_len: *mut usize) -> *mut
             put_entry_with_lru(
                 &mut state,
                 key.to_string(),
-                Entry { value: Value::Bytes(bytes.clone()), expires_at_ms: None },
+                Entry { value: Value::Bytes(Arc::new(bytes.clone())), expires_at_ms: None },
             );
             aof_write_set(key, &bytes);
             prepare_return(b"OK".to_vec(), out_len)
@@ -1531,16 +1672,131 @@ pub extern "C" fn cache_eval(script: *const c_char, out_len: *mut usize) -> *mut
 
 #[no_mangle]
 pub extern "C" fn cache_get_b(key: *const c_uchar, key_len: usize, out_len: *mut usize) -> *mut c_uchar {
-    let key_str = bytes_key_to_string(key, key_len);
-    cache_get(std::ffi::CString::new(key_str).unwrap().as_ptr(), out_len)
+    let key_vec = unsafe { to_bytes(key, key_len) };
+    let mut state = CACHE.write().unwrap();
+
+    if maybe_remove_if_expired_b(&mut state, &key_vec) {
+        unsafe { *out_len = 0 };
+        return std::ptr::null_mut();
+    }
+
+    if let Some(entry) = state.map_b.get(&key_vec) {
+        if let Value::Bytes(val) = &entry.value {
+            return prepare_return((**val).clone(), out_len);
+        }
+    }
+
+    unsafe { *out_len = 0 };
+    std::ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn cache_get_into_b(key: *const c_uchar, key_len: usize, dst: *mut c_uchar, dst_len: usize) -> i64 {
+    let key_vec = unsafe { to_bytes(key, key_len) };
+    if key_vec.is_empty() {
+        return -1;
+    }
+
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired_b(&mut state, &key_vec) {
+        return -1;
+    }
+
+    let Some(entry) = state.map_b.get(&key_vec) else {
+        return -1;
+    };
+    let Value::Bytes(val) = &entry.value else {
+        return -1;
+    };
+
+    let value_len = val.len();
+    if value_len == 0 {
+        return 0;
+    }
+    if dst.is_null() || dst_len < value_len {
+        return -(value_len as i64);
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(val.as_ptr(), dst, value_len);
+    }
+    value_len as i64
+}
+
+// Zero-copy value lease for binary keys.
+//
+// Returns: opaque handle (must be freed via cache_bytes_lease_free), or null if missing/expired.
+// Out params: (*out_ptr, *out_len) are set to the value bytes.
+#[no_mangle]
+pub extern "C" fn cache_get_lease_b(
+    key: *const c_uchar,
+    key_len: usize,
+    out_ptr: *mut *const c_uchar,
+    out_len: *mut usize,
+) -> *const Vec<u8> {
+    if out_ptr.is_null() || out_len.is_null() {
+        return std::ptr::null();
+    }
+
+    let key_vec = unsafe { to_bytes(key, key_len) };
+    if key_vec.is_empty() {
+        unsafe {
+            *out_ptr = std::ptr::null();
+            *out_len = 0;
+        }
+        return std::ptr::null();
+    }
+
+    let mut state = CACHE.write().unwrap();
+    if maybe_remove_if_expired_b(&mut state, &key_vec) {
+        unsafe {
+            *out_ptr = std::ptr::null();
+            *out_len = 0;
+        }
+        return std::ptr::null();
+    }
+
+    let Some(entry) = state.map_b.get(&key_vec) else {
+        unsafe {
+            *out_ptr = std::ptr::null();
+            *out_len = 0;
+        }
+        return std::ptr::null();
+    };
+
+    let Value::Bytes(val) = &entry.value else {
+        unsafe {
+            *out_ptr = std::ptr::null();
+            *out_len = 0;
+        }
+        return std::ptr::null();
+    };
+
+    let handle = Arc::into_raw(val.clone());
+    unsafe {
+        *out_ptr = (*handle).as_ptr();
+        *out_len = (*handle).len();
+    }
+    handle
+}
+
+#[no_mangle]
+pub extern "C" fn cache_bytes_lease_free(handle: *const Vec<u8>) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        // Drop one Arc refcount.
+        let _ = Arc::from_raw(handle);
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn cache_remove_b(key: *const c_uchar, key_len: usize) {
-    let key_str = bytes_key_to_string(key, key_len);
+    let key_vec = unsafe { to_bytes(key, key_len) };
     let mut state = CACHE.write().unwrap();
-    apply_remove_internal(&mut state, &key_str);
-    aof_write_remove(&key_str);
+    apply_remove_internal_b(&mut state, &key_vec);
+    aof_write_remove_b(&key_vec);
 }
 
 // --- Phase3: Pub/Sub ---

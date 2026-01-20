@@ -23,6 +23,12 @@ Console.WriteLine(JustCache.GetString("hello"));
 JustCache.SetStringWithTtl("temp", "value", TimeSpan.FromSeconds(1));
 Console.WriteLine(JustCache.TtlMs("temp"));
 
+// GC-free hot path (no per-call byte[] allocations):
+var keyBytes = System.Text.Encoding.UTF8.GetBytes("hot:key");
+var buffer = new byte[32 * 1024];
+if (JustCache.TryGet(keyBytes, buffer, out var written))
+	Console.WriteLine($"bytes={written}");
+
 JustCache.Remove("hello");
 JustCache.ClearAll();
 ```
@@ -48,6 +54,7 @@ JustCache.ClearAll();
 - TTL operations: `SetWithTtl`, `SetStringWithTtl`, `Expire`, `TtlMs`.
 - LRU sizing: `SetMaxItems`, `GetMaxItems`, `Count`.
 - Binary keys: `Set(byte[] key, byte[] value)`, `Get(byte[] key)`, `Remove(byte[] key)`.
+- GC-free get (caller buffer): `TryGet(byte[] key, Span<byte> destination, out int written)`.
 - Hashes: `HSet`, `HGet`, `HGetAll`.
 - Lists: `LPush`, `RPop`, `LRange`.
 - Sets: `SAdd`, `SIsMember`.

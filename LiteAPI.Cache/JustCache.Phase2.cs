@@ -120,6 +120,38 @@ public static partial class JustCache
     private static extern IntPtr cache_get_b_mac(byte[] key, UIntPtr keyLen, out UIntPtr len);
 
 
+    // Binary-safe zero-allocation get: caller provides destination buffer
+    [DllImport(WindowsLib, EntryPoint = "cache_get_into_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe long cache_get_into_b_win(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+
+    [DllImport(LinuxLib, EntryPoint = "cache_get_into_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe long cache_get_into_b_linux(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+
+    [DllImport(MacLib, EntryPoint = "cache_get_into_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe long cache_get_into_b_mac(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+
+
+    // Binary-safe zero-copy get: returns a lease handle + pointer/len
+    [DllImport(WindowsLib, EntryPoint = "cache_get_lease_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe IntPtr cache_get_lease_b_win(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+
+    [DllImport(LinuxLib, EntryPoint = "cache_get_lease_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe IntPtr cache_get_lease_b_linux(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+
+    [DllImport(MacLib, EntryPoint = "cache_get_lease_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe IntPtr cache_get_lease_b_mac(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+
+
+    [DllImport(WindowsLib, EntryPoint = "cache_bytes_lease_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void cache_bytes_lease_free_win(IntPtr handle);
+
+    [DllImport(LinuxLib, EntryPoint = "cache_bytes_lease_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void cache_bytes_lease_free_linux(IntPtr handle);
+
+    [DllImport(MacLib, EntryPoint = "cache_bytes_lease_free", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void cache_bytes_lease_free_mac(IntPtr handle);
+
+
     [DllImport(WindowsLib, EntryPoint = "cache_remove_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_b_win(byte[] key, UIntPtr keyLen);
 
@@ -331,6 +363,135 @@ public static partial class JustCache
         var result = CopyAndFree(ptr, len);
         JustCacheEventSource.Log.ReportGetHit(result.Length);
         return result;
+    }
+
+    // Caller-buffer API for GC-free hit path.
+    // Semantics:
+    // - returns true when value copied into destination (written = bytes copied)
+    // - returns false when key missing (written = 0)
+    // - returns false when destination too small (written = required length)
+    public static unsafe bool TryGet(byte[] key, Span<byte> destination, out int written)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        written = 0;
+
+        long ret;
+        fixed (byte* keyPtr = key)
+        fixed (byte* dstPtr = destination)
+        {
+            var klen = (UIntPtr)key.Length;
+            var dlen = (UIntPtr)destination.Length;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                ret = cache_get_into_b_win(keyPtr, klen, dstPtr, dlen);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                ret = cache_get_into_b_linux(keyPtr, klen, dstPtr, dlen);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                ret = cache_get_into_b_mac(keyPtr, klen, dstPtr, dlen);
+            else
+                throw new PlatformNotSupportedException();
+        }
+
+        if (ret == -1)
+        {
+            JustCacheEventSource.Log.ReportGetMiss();
+            return false;
+        }
+
+        if (ret < 0)
+        {
+            written = checked((int)(-ret));
+            JustCacheEventSource.Log.ReportGetHit(written);
+            return false;
+        }
+
+        written = checked((int)ret);
+        JustCacheEventSource.Log.ReportGetHit(written);
+        return true;
+    }
+
+    public static bool TryGet(byte[] key, byte[] destination, out int written)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        return TryGet(key, destination.AsSpan(), out written);
+    }
+
+    public readonly ref struct BytesLease
+    {
+        private readonly IntPtr _handle;
+        private readonly IntPtr _ptr;
+
+        public int Length { get; }
+        public bool IsValid => _handle != IntPtr.Zero;
+
+        internal BytesLease(IntPtr handle, IntPtr ptr, int length)
+        {
+            _handle = handle;
+            _ptr = ptr;
+            Length = length;
+        }
+
+        public unsafe ReadOnlySpan<byte> Span
+        {
+            get
+            {
+                if (_handle == IntPtr.Zero || _ptr == IntPtr.Zero || Length <= 0)
+                    return ReadOnlySpan<byte>.Empty;
+                return new ReadOnlySpan<byte>((void*)_ptr, Length);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_handle == IntPtr.Zero)
+                return;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                cache_bytes_lease_free_win(_handle);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                cache_bytes_lease_free_linux(_handle);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                cache_bytes_lease_free_mac(_handle);
+            else
+                throw new PlatformNotSupportedException();
+        }
+    }
+
+    // Zero-copy read API. Returned lease must be disposed.
+    // - Missing key => returns default lease (IsValid=false)
+    // - Existing key with empty value => IsValid=true, Span empty
+    public static unsafe BytesLease GetLease(byte[] key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        IntPtr outPtr;
+        UIntPtr outLen;
+        IntPtr handle;
+
+        fixed (byte* keyPtr = key)
+        {
+            var klen = (UIntPtr)key.Length;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                handle = cache_get_lease_b_win(keyPtr, klen, out outPtr, out outLen);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                handle = cache_get_lease_b_linux(keyPtr, klen, out outPtr, out outLen);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                handle = cache_get_lease_b_mac(keyPtr, klen, out outPtr, out outLen);
+            else
+                throw new PlatformNotSupportedException();
+        }
+
+        if (handle == IntPtr.Zero)
+        {
+            JustCacheEventSource.Log.ReportGetMiss();
+            return default;
+        }
+
+        var length = checked((int)outLen);
+        JustCacheEventSource.Log.ReportGetHit(length);
+        return new BytesLease(handle, outPtr, length);
     }
 
     public static void Remove(byte[] key)
