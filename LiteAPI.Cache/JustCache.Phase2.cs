@@ -347,6 +347,35 @@ public static partial class JustCache
     private static extern unsafe long cache_get_into_b_mac(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
 #endif
 
+    // Read-only peek: same signature as `cache_get_into_b` but the native
+    // side takes the shard's *read* lock and never touches LRU recency.
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_peek_into_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial long cache_peek_into_b_win(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#else
+    [DllImport(WindowsLib, EntryPoint = "cache_peek_into_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe long cache_peek_into_b_win(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#endif
+
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_peek_into_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial long cache_peek_into_b_linux(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#else
+    [DllImport(LinuxLib, EntryPoint = "cache_peek_into_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe long cache_peek_into_b_linux(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#endif
+
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_peek_into_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial long cache_peek_into_b_mac(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#else
+    [DllImport(MacLib, EntryPoint = "cache_peek_into_b", CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe long cache_peek_into_b_mac(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#endif
+
 
     // Binary-safe zero-copy get: returns a lease handle + pointer/len
     #if NET7_0_OR_GREATER
@@ -686,6 +715,61 @@ public static partial class JustCache
     {
         ArgumentNullException.ThrowIfNull(destination);
         return TryGet(key, destination.AsSpan(), out written);
+    }
+
+    /// <summary>
+    /// Read-only sibling of <see cref="TryGet(byte[], Span{byte}, out int)"/>.
+    /// Takes the shard's read lock instead of the write lock and skips
+    /// LRU recency updates, so many threads can peek the same shard in
+    /// parallel. Use it when the caller does not need an LRU promotion
+    /// on read — a common case for hot-path lookups where the working
+    /// set fits comfortably in the cache anyway.
+    /// </summary>
+    public static unsafe bool TryPeek(byte[] key, Span<byte> destination, out int written)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        written = 0;
+
+        long ret;
+        fixed (byte* keyPtr = key)
+        fixed (byte* dstPtr = destination)
+        {
+            var klen = (UIntPtr)key.Length;
+            var dlen = (UIntPtr)destination.Length;
+
+            if (_platform == Platform.Windows)
+                ret = cache_peek_into_b_win(keyPtr, klen, dstPtr, dlen);
+            else if (_platform == Platform.Linux)
+                ret = cache_peek_into_b_linux(keyPtr, klen, dstPtr, dlen);
+            else if (_platform == Platform.OSX)
+                ret = cache_peek_into_b_mac(keyPtr, klen, dstPtr, dlen);
+            else
+                throw new PlatformNotSupportedException();
+        }
+
+        if (ret == -1)
+        {
+            JustCacheEventSource.Log.ReportGetMiss();
+            return false;
+        }
+
+        if (ret < 0)
+        {
+            written = checked((int)(-ret));
+            JustCacheEventSource.Log.ReportGetHit(written);
+            return false;
+        }
+
+        written = checked((int)ret);
+        JustCacheEventSource.Log.ReportGetHit(written);
+        return true;
+    }
+
+    public static bool TryPeek(byte[] key, byte[] destination, out int written)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        return TryPeek(key, destination.AsSpan(), out written);
     }
 
     public readonly ref struct BytesLease

@@ -1686,6 +1686,61 @@ pub extern "C" fn cache_get_into_b(key: *const c_uchar, key_len: usize, dst: *mu
     })
 }
 
+/// Read-only variant of `cache_get_into_b`. Takes the shard *read* lock
+/// instead of the write lock, so any number of concurrent peeks against
+/// the same shard run in parallel. Does NOT update the LRU recency
+/// position — useful when callers explicitly don't care about LRU
+/// promotion on reads, but do care about read throughput.
+///
+/// Same return contract as `cache_get_into_b`:
+///   -1 → key missing or expired or not a Bytes value
+///   <0 → buffer too small; required length is -ret
+///   >0 → bytes written
+///    0 → value exists but is empty
+#[no_mangle]
+pub extern "C" fn cache_peek_into_b(
+    key: *const c_uchar,
+    key_len: usize,
+    dst: *mut c_uchar,
+    dst_len: usize,
+) -> i64 {
+    ffi_guard("cache_peek_into_b", -1, || {
+        let key_vec = unsafe { to_bytes(key, key_len) };
+        if key_vec.is_empty() {
+            return -1;
+        }
+
+        let shard_idx = shard_for_b(&key_vec);
+        let state = CACHE.shards[shard_idx].read().unwrap();
+
+        let Some(entry) = state.map_b.peek(&key_vec) else {
+            return -1;
+        };
+        // Skip expired entries lazily — we can't evict under a read
+        // lock; the expiry reaper or the next mutating call will tidy
+        // it up. Treat as miss.
+        if is_expired(entry) {
+            return -1;
+        }
+        let Value::Bytes(val) = &entry.value else {
+            return -1;
+        };
+
+        let value_len = val.len();
+        if value_len == 0 {
+            return 0;
+        }
+        if dst.is_null() || dst_len < value_len {
+            return -(value_len as i64);
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(val.as_ptr(), dst, value_len);
+        }
+        value_len as i64
+    })
+}
+
 // Zero-copy value lease for binary keys.
 //
 // Returns: opaque handle (must be freed via cache_bytes_lease_free), or null if missing/expired.
@@ -1729,6 +1784,65 @@ pub extern "C" fn cache_get_lease_b(
             return std::ptr::null();
         };
 
+        let Value::Bytes(val) = &entry.value else {
+            unsafe {
+                *out_ptr = std::ptr::null();
+                *out_len = 0;
+            }
+            return std::ptr::null();
+        };
+
+        let handle = Arc::into_raw(val.clone());
+        unsafe {
+            *out_ptr = (*handle).as_ptr();
+            *out_len = (*handle).len();
+        }
+        handle
+    })
+}
+
+/// Read-only zero-copy variant of `cache_get_lease_b`. Holds the shard
+/// *read* lock for the duration of the lookup; releases it before
+/// returning (the lease itself is just an Arc bump, not a lock).
+/// Like `cache_peek_into_b`, this skips LRU promotion in exchange for
+/// scalable concurrent reads.
+#[no_mangle]
+pub extern "C" fn cache_peek_lease_b(
+    key: *const c_uchar,
+    key_len: usize,
+    out_ptr: *mut *const c_uchar,
+    out_len: *mut usize,
+) -> *const Vec<u8> {
+    ffi_guard("cache_peek_lease_b", std::ptr::null(), || {
+        if out_ptr.is_null() || out_len.is_null() {
+            return std::ptr::null();
+        }
+
+        let key_vec = unsafe { to_bytes(key, key_len) };
+        if key_vec.is_empty() {
+            unsafe {
+                *out_ptr = std::ptr::null();
+                *out_len = 0;
+            }
+            return std::ptr::null();
+        }
+
+        let shard_idx = shard_for_b(&key_vec);
+        let state = CACHE.shards[shard_idx].read().unwrap();
+        let Some(entry) = state.map_b.peek(&key_vec) else {
+            unsafe {
+                *out_ptr = std::ptr::null();
+                *out_len = 0;
+            }
+            return std::ptr::null();
+        };
+        if is_expired(entry) {
+            unsafe {
+                *out_ptr = std::ptr::null();
+                *out_len = 0;
+            }
+            return std::ptr::null();
+        }
         let Value::Bytes(val) = &entry.value else {
             unsafe {
                 *out_ptr = std::ptr::null();

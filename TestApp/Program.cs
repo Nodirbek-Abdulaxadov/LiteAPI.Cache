@@ -53,14 +53,16 @@ static void RunConcurrent()
         JustCache.Set(keys[i], value);
     }
 
-    Console.WriteLine($"{"threads",-8} {"GET ops/s",-14} {"SET ops/s",-14} {"GET ns/op",-12} {"SET ns/op",-12}");
+    Console.WriteLine(
+        $"{"threads",-8} {"TryGet ops/s",-14} {"TryPeek ops/s",-15} {"Set ops/s",-14} " +
+        $"{"Get ns",-9} {"Peek ns",-9} {"Set ns",-9}");
 
     foreach (var threads in new[] { 1, 2, 4, 8, 16 })
     {
-        var totalGets = (long)threads * opsPerThread;
-        var totalSets = (long)threads * opsPerThread;
+        var totalOps = (long)threads * opsPerThread;
 
-        // GET (read-heavy: read locks on shards).
+        // TryGet: takes shard write lock (because LruCache::get mutates
+        // recency). Serializes per shard even for reads.
         var getTime = MeasureParallel(threads, opsPerThread, tid =>
         {
             var rng = new Random(unchecked(0x517cc1b7 ^ tid));
@@ -72,7 +74,20 @@ static void RunConcurrent()
             }
         });
 
-        // SET (write-heavy: write locks on shards).
+        // TryPeek: takes shard *read* lock, no LRU update. Many threads
+        // on the same shard can read in parallel.
+        var peekTime = MeasureParallel(threads, opsPerThread, tid =>
+        {
+            var rng = new Random(unchecked((int)(0xa5a5a5a5u ^ (uint)tid)));
+            var buf = new byte[64];
+            for (var i = 0; i < opsPerThread; i++)
+            {
+                var k = keys[rng.Next(keyspace)];
+                JustCache.TryPeek(k, buf, out _);
+            }
+        });
+
+        // Set: write lock per shard.
         var setTime = MeasureParallel(threads, opsPerThread, tid =>
         {
             var rng = new Random(unchecked((int)(0x9e3779b1u ^ (uint)tid)));
@@ -83,23 +98,25 @@ static void RunConcurrent()
             }
         });
 
-        var getOps = totalGets / getTime.TotalSeconds;
-        var setOps = totalSets / setTime.TotalSeconds;
-        var getNs = (getTime.TotalNanoseconds) / totalGets;
-        var setNs = (setTime.TotalNanoseconds) / totalSets;
-
         Console.WriteLine(
             $"{threads,-8} " +
-            $"{getOps,14:N0} " +
-            $"{setOps,14:N0} " +
-            $"{getNs,12:N1} " +
-            $"{setNs,12:N1}");
+            $"{totalOps / getTime.TotalSeconds,14:N0} " +
+            $"{totalOps / peekTime.TotalSeconds,15:N0} " +
+            $"{totalOps / setTime.TotalSeconds,14:N0} " +
+            $"{getTime.TotalNanoseconds / totalOps,9:N1} " +
+            $"{peekTime.TotalNanoseconds / totalOps,9:N1} " +
+            $"{setTime.TotalNanoseconds / totalOps,9:N1}");
     }
 
     Console.WriteLine();
-    Console.WriteLine("# Read aside: a perfectly sharded cache with no contention should");
-    Console.WriteLine("# scale GET ops/s roughly linearly with threads up to NUM_SHARDS=16.");
-    Console.WriteLine("# Any departure from linear is your sharding overhead + hash skew.");
+    Console.WriteLine("# Reading:");
+    Console.WriteLine("# - TryGet promotes LRU on each call → shard write lock → reads serialize");
+    Console.WriteLine("#   per shard. Throughput plateau around the write-lock contention floor.");
+    Console.WriteLine("# - TryPeek is the matching read-only path → shard read lock → many readers");
+    Console.WriteLine("#   per shard run in parallel. This is where sharding actually pays off");
+    Console.WriteLine("#   for read traffic. Should scale ~linearly to NUM_SHARDS=16.");
+    Console.WriteLine("# - Set takes the write lock by construction; expect ~linear scaling up to");
+    Console.WriteLine("#   NUM_SHARDS=16 modulo FFI and Random.Next overhead.");
 }
 
 static TimeSpan MeasureParallel(int threads, int opsPerThread, Action<int> body)
