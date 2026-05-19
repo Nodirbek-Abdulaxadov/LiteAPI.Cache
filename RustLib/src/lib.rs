@@ -52,12 +52,18 @@ fn ffi_guard<R>(label: &'static str, default: R, f: impl FnOnce() -> R) -> R {
     }
 }
 
-// Define the Value enum to support multiple data structures
+// Define the Value enum to support multiple data structures.
+//
+// `List(VecDeque<Vec<u8>>)` instead of `Vec<Vec<u8>>`: LPUSH pushes
+// onto the head, which would be O(n) on Vec (Vec::insert(0, _) shifts
+// every element). VecDeque is a ring buffer with O(1) push_front /
+// push_back / pop_front / pop_back. LRANGE / get-by-index works the
+// same way (VecDeque implements Index<usize>).
 #[derive(Clone)]
 enum Value {
     Bytes(Arc<Vec<u8>>),
     Hash(HashMap<String, Vec<u8>>),
-    List(Vec<Vec<u8>>),
+    List(VecDeque<Vec<u8>>),
     Set(HashSet<Vec<u8>>),
     SortedSet(HashMap<String, f64>), // Member -> Score
     Stream(StreamData),
@@ -701,11 +707,15 @@ pub extern "C" fn cache_lpush(key: *const c_char, value: *const c_uchar, len: us
         let mut entry = state
             .map
             .pop(&key_str)
-            .unwrap_or(Entry { value: Value::List(Vec::new()), expires_at_ms: None });
+            .unwrap_or(Entry { value: Value::List(VecDeque::new()), expires_at_ms: None });
 
         match &mut entry.value {
-            Value::List(list) => list.insert(0, val_vec.clone()),
-            _ => entry.value = Value::List(vec![val_vec.clone()]),
+            Value::List(list) => list.push_front(val_vec.clone()),
+            _ => {
+                let mut d = VecDeque::with_capacity(1);
+                d.push_front(val_vec.clone());
+                entry.value = Value::List(d);
+            }
         }
 
         put_entry_with_lru(&mut state, key_str.clone(), entry);
@@ -732,7 +742,8 @@ pub extern "C" fn cache_rpop(key: *const c_char, out_len: *mut usize) -> *mut c_
 
         let mut popped: Option<Vec<u8>> = None;
         if let Value::List(list) = &mut entry.value {
-            popped = list.pop();
+            // RPOP — Redis semantics: take the *tail* element.
+            popped = list.pop_back();
         }
 
         // Keep key if list still exists (even empty) to match current behavior
@@ -1185,10 +1196,14 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let mut entry = shard
                         .map
                         .pop(&key)
-                        .unwrap_or(Entry { value: Value::List(Vec::new()), expires_at_ms: None });
+                        .unwrap_or(Entry { value: Value::List(VecDeque::new()), expires_at_ms: None });
                     match &mut entry.value {
-                        Value::List(list) => list.insert(0, val),
-                        _ => entry.value = Value::List(vec![val]),
+                        Value::List(list) => list.push_front(val),
+                        _ => {
+                            let mut d = VecDeque::with_capacity(1);
+                            d.push_front(val);
+                            entry.value = Value::List(d);
+                        }
                     }
                     put_entry_with_lru(&mut shard, key, entry);
                 }
