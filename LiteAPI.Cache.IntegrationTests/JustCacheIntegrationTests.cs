@@ -305,4 +305,136 @@ public sealed class JustCacheIntegrationTests
         Assert.Equal("hello", JustCache.EvalString("GET eval:k1"));
         Assert.Equal("1", JustCache.EvalString("DEL eval:k1"));
     }
+
+    [Fact]
+    public void TryPeek_Mirrors_TryGet_For_Hits_And_Misses()
+    {
+        var key = Encoding.UTF8.GetBytes("peek:single");
+        var payload = Encoding.UTF8.GetBytes("hello-peek");
+        var buffer = new byte[64];
+
+        // Miss before write.
+        Assert.False(JustCache.TryPeek(key, buffer, out var missWritten));
+        Assert.Equal(0, missWritten);
+
+        JustCache.Set(key, payload);
+
+        // Hit after write.
+        Assert.True(JustCache.TryPeek(key, buffer, out var hitWritten));
+        Assert.Equal(payload.Length, hitWritten);
+        Assert.Equal(payload, buffer.AsSpan(0, hitWritten).ToArray());
+
+        // TryGet sees the same value.
+        var getBuf = new byte[64];
+        Assert.True(JustCache.TryGet(key, getBuf, out var getWritten));
+        Assert.Equal(payload, getBuf.AsSpan(0, getWritten).ToArray());
+
+        // Buffer-too-small surfaces the required size on both APIs.
+        var tinyBuf = new byte[1];
+        Assert.False(JustCache.TryPeek(key, tinyBuf, out var requiredPeek));
+        Assert.Equal(payload.Length, requiredPeek);
+        Assert.False(JustCache.TryGet(key, tinyBuf, out var requiredGet));
+        Assert.Equal(payload.Length, requiredGet);
+    }
+
+    [Fact]
+    public void Concurrent_SetGet_Survives_16_Threads()
+    {
+        // Validates that 16 parallel writers + readers across keys
+        // mapped to all 16 shards don't corrupt each other. Each thread
+        // owns a disjoint key range, so the final state must contain
+        // exactly the value it last wrote.
+        const int threads = 16;
+        const int opsPerThread = 5_000;
+
+        JustCache.SetMaxItems(threads * opsPerThread * 2);
+        JustCache.ClearAll();
+
+        var workers = new Thread[threads];
+        var errors = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+        for (var t = 0; t < threads; t++)
+        {
+            var tid = t;
+            workers[t] = new Thread(() =>
+            {
+                var buf = new byte[32];
+                for (var i = 0; i < opsPerThread; i++)
+                {
+                    var key = Encoding.UTF8.GetBytes($"conc:t{tid}:k{i}");
+                    var val = Encoding.UTF8.GetBytes($"v-{tid}-{i}");
+
+                    JustCache.Set(key, val);
+
+                    // Mix in TryPeek + TryGet on every iteration — both
+                    // paths should agree.
+                    if (!JustCache.TryPeek(key, buf, out var peekLen))
+                    {
+                        errors.Add($"peek miss tid={tid} i={i}");
+                        continue;
+                    }
+                    if (!JustCache.TryGet(key, buf, out var getLen))
+                    {
+                        errors.Add($"get miss tid={tid} i={i}");
+                        continue;
+                    }
+                    if (peekLen != val.Length || getLen != val.Length)
+                    {
+                        errors.Add($"len mismatch tid={tid} i={i} peek={peekLen} get={getLen} expect={val.Length}");
+                    }
+                }
+            }) { IsBackground = true };
+            workers[t].Start();
+        }
+        foreach (var w in workers) w.Join();
+
+        Assert.Empty(errors);
+
+        // Spot-check a few random entries from each thread.
+        var verifyBuf = new byte[32];
+        for (var t = 0; t < threads; t++)
+        {
+            for (var i = 0; i < opsPerThread; i += 250)
+            {
+                var key = Encoding.UTF8.GetBytes($"conc:t{t}:k{i}");
+                Assert.True(JustCache.TryPeek(key, verifyBuf, out var n));
+                Assert.Equal($"v-{t}-{i}", Encoding.UTF8.GetString(verifyBuf, 0, n));
+            }
+        }
+    }
+
+    [Fact]
+    public void Concurrent_PerKey_LastWriterWins()
+    {
+        // 8 threads all clobber the *same* key. The cache must end with
+        // exactly one of their values (not a mix) and survive without
+        // crashing. This is the classic "lock correctness" smoke test
+        // for a sharded structure — all 8 threads share one shard.
+        const int threads = 8;
+        const int opsPerThread = 2_000;
+
+        var key = Encoding.UTF8.GetBytes("conc:shared:key");
+        JustCache.ClearAll();
+
+        var workers = new Thread[threads];
+        for (var t = 0; t < threads; t++)
+        {
+            var tid = t;
+            workers[t] = new Thread(() =>
+            {
+                for (var i = 0; i < opsPerThread; i++)
+                {
+                    var val = Encoding.UTF8.GetBytes($"writer-{tid}");
+                    JustCache.Set(key, val);
+                }
+            }) { IsBackground = true };
+            workers[t].Start();
+        }
+        foreach (var w in workers) w.Join();
+
+        var buf = new byte[64];
+        Assert.True(JustCache.TryGet(key, buf, out var n));
+        var winner = Encoding.UTF8.GetString(buf, 0, n);
+        Assert.Matches("^writer-[0-7]$", winner);
+    }
 }
