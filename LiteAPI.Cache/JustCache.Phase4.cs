@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace LiteAPI.Cache;
@@ -8,14 +9,32 @@ public static partial class JustCache
 {
     #region Phase4: JSON Path
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_json_get", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_json_get_win(string key, string path, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_json_get", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_json_get_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_json_get", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_json_get_linux(string key, string path, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_json_get", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_json_get_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_json_get", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_json_get_mac(string key, string path, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_json_get", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_json_get_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, out UIntPtr len);
+#endif
 
     public static byte[]? JsonGet(string key, string path)
     {
@@ -43,14 +62,32 @@ public static partial class JustCache
         return bytes == null ? null : Encoding.UTF8.GetString(bytes);
     }
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_json_set", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_json_set_win(string key, string path, byte[] jsonValue, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_json_set", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_json_set_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] jsonValue, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_json_set", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_json_set_linux(string key, string path, byte[] jsonValue, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_json_set", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_json_set_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] jsonValue, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_json_set", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_json_set_mac(string key, string path, byte[] jsonValue, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_json_set", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_json_set_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] jsonValue, UIntPtr len);
+#endif
 
     public static bool JsonSet(string key, string path, string jsonValue)
     {
@@ -76,14 +113,32 @@ public static partial class JustCache
 
     #region Phase4: Secondary Index + Find
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_index_create_numeric", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_index_create_numeric_win(string field);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_index_create_numeric", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_index_create_numeric_win([MarshalAs(UnmanagedType.LPUTF8Str)] string field);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_index_create_numeric", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_index_create_numeric_linux(string field);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_index_create_numeric", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_index_create_numeric_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string field);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_index_create_numeric", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_index_create_numeric_mac(string field);
+#else
     [DllImport(MacLib, EntryPoint = "cache_index_create_numeric", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_index_create_numeric_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string field);
+#endif
 
     public static bool CreateNumericIndex(string field)
     {
@@ -100,14 +155,32 @@ public static partial class JustCache
         return rc != 0;
     }
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_find", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_find_win(string query, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_find", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_find_win([MarshalAs(UnmanagedType.LPUTF8Str)] string query, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_find", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_find_linux(string query, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_find", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_find_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string query, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_find", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_find_mac(string query, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_find", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_find_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string query, out UIntPtr len);
+#endif
 
     public static IReadOnlyList<string> FindKeys(string query)
     {
@@ -164,14 +237,32 @@ public static partial class JustCache
 
     #region Phase4: Eval
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_eval", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_eval_win(string script, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_eval", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_eval_win([MarshalAs(UnmanagedType.LPUTF8Str)] string script, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_eval", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_eval_linux(string script, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_eval", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_eval_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string script, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_eval", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_eval_mac(string script, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_eval", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_eval_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string script, out UIntPtr len);
+#endif
 
     public static byte[]? Eval(string script)
     {

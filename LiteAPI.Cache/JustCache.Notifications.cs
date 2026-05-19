@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace LiteAPI.Cache;
@@ -8,24 +9,60 @@ public static partial class JustCache
 {
     #region Phase3: Keyspace Notifications
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_notifications_poll", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_notifications_poll_win(out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_notifications_poll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_notifications_poll_win(out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_notifications_poll", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_notifications_poll_linux(out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_notifications_poll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_notifications_poll_linux(out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_notifications_poll", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_notifications_poll_mac(out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_notifications_poll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_notifications_poll_mac(out UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_notifications_clear", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_notifications_clear_win();
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_notifications_clear", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_notifications_clear_win();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_notifications_clear", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_notifications_clear_linux();
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_notifications_clear", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_notifications_clear_linux();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_notifications_clear", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_notifications_clear_mac();
+#else
     [DllImport(MacLib, EntryPoint = "cache_notifications_clear", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_notifications_clear_mac();
+#endif
 
 
     public enum NotificationKind : byte

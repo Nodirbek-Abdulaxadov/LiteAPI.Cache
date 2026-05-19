@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace LiteAPI.Cache;
@@ -8,24 +9,60 @@ public static partial class JustCache
 {
     #region Sorted Sets (ZADD/ZRANGE)
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_zadd", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_zadd_win(string key, double score, string member);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_zadd", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_zadd_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, double score, [MarshalAs(UnmanagedType.LPUTF8Str)] string member);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_zadd", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_zadd_linux(string key, double score, string member);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_zadd", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_zadd_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, double score, [MarshalAs(UnmanagedType.LPUTF8Str)] string member);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_zadd", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_zadd_mac(string key, double score, string member);
+#else
     [DllImport(MacLib, EntryPoint = "cache_zadd", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_zadd_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, double score, [MarshalAs(UnmanagedType.LPUTF8Str)] string member);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_zrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_zrange_win(string key, int start, int end, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_zrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_zrange_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int start, int end, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_zrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_zrange_linux(string key, int start, int end, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_zrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_zrange_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int start, int end, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_zrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_zrange_mac(string key, int start, int end, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_zrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_zrange_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int start, int end, out UIntPtr len);
+#endif
 
 
     public static void ZAdd(string key, double score, string member)

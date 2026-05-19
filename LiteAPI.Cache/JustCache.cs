@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 ﻿using System.Runtime.InteropServices;
 
 namespace LiteAPI.Cache;
@@ -82,12 +83,30 @@ public static partial class JustCache
 
     #region Cache Initialization
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_init", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_init_win();
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_init", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_init_win();
+#endif
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_init", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_init_linux();
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_init", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_init_linux();
+#endif
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_init", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_init_mac();
+#else
     [DllImport(MacLib, EntryPoint = "cache_init", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_init_mac();
+#endif
 
     public static void Initialize()
     {
@@ -105,14 +124,32 @@ public static partial class JustCache
 
     #region  Set Method
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_set", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_win(string key, byte[] val, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_set", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_set", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_linux(string key, byte[] val, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_set", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_set", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_mac(string key, byte[] val, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_set", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
+#endif
 
     public static void Set(string key, byte[] val)
     {
@@ -141,23 +178,59 @@ public static partial class JustCache
 
     #region  Get Method
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_get", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_get_win(string key, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_get", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_get_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_get", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_get_linux(string key, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_get", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_get_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_get", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_get_mac(string key, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_get", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_get_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_free", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_free_win(IntPtr ptr, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_free_win(IntPtr ptr, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_free", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_free_linux(IntPtr ptr, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_free_linux(IntPtr ptr, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_free", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_free_mac(IntPtr ptr, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_free_mac(IntPtr ptr, UIntPtr len);
+#endif
 
     public static byte[]? Get(string key)
     {
@@ -256,25 +329,61 @@ public static partial class JustCache
     #region  Clear Methods
 
     // Windows
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_remove", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_remove_win(string key);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_clear_all", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_clear_all_win();
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_win();
+#endif
 
     // Linux
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_remove", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_remove_linux(string key);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_clear_all", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_clear_all_linux();
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_linux();
+#endif
 
     // macOS
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_remove", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_remove_mac(string key);
+#else
     [DllImport(MacLib, EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_clear_all", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_clear_all_mac();
+#else
     [DllImport(MacLib, EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_mac();
+#endif
 
     public static void Remove(string key)
     {

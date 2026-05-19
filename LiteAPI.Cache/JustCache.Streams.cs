@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 namespace LiteAPI.Cache;
 
@@ -7,24 +8,60 @@ public static partial class JustCache
 {
     #region Phase3: Streams (XADD/XRANGE)
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_xadd", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_xadd_win(string key, byte[] payload, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_xadd", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_xadd_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] payload, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_xadd", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_xadd_linux(string key, byte[] payload, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_xadd", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_xadd_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] payload, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_xadd", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_xadd_mac(string key, byte[] payload, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_xadd", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_xadd_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] payload, UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_xrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_xrange_win(string key, ulong startId, ulong endId, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_xrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_xrange_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, ulong startId, ulong endId, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_xrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_xrange_linux(string key, ulong startId, ulong endId, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_xrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_xrange_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, ulong startId, ulong endId, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_xrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_xrange_mac(string key, ulong startId, ulong endId, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_xrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_xrange_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, ulong startId, ulong endId, out UIntPtr len);
+#endif
 
 
     public readonly record struct StreamItem(ulong Id, byte[] Payload);

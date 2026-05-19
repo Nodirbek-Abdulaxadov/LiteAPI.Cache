@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace LiteAPI.Cache;
@@ -8,34 +9,88 @@ public static partial class JustCache
 {
     #region Lists (LPUSH/RPOP/LRANGE)
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_lpush", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_lpush_win(string key, byte[] val, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_lpush", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_lpush_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_lpush", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_lpush_linux(string key, byte[] val, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_lpush", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_lpush_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_lpush", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_lpush_mac(string key, byte[] val, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_lpush", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_lpush_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_rpop", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_rpop_win(string key, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_rpop", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_rpop_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_rpop", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_rpop_linux(string key, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_rpop", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_rpop_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_rpop", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_rpop_mac(string key, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_rpop", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_rpop_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_lrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_lrange_win(string key, int start, int end, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_lrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_lrange_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int start, int end, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_lrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_lrange_linux(string key, int start, int end, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_lrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_lrange_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int start, int end, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_lrange", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_lrange_mac(string key, int start, int end, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_lrange", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_lrange_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int start, int end, out UIntPtr len);
+#endif
 
 
     public static void LPush(string key, byte[] value)

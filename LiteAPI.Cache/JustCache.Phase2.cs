@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 namespace LiteAPI.Cache;
 
@@ -7,159 +8,429 @@ public static partial class JustCache
     #region Phase2: LRU / TTL / AOF / Binary Keys
 
     // LRU sizing
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_set_max_items", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_max_items_win(UIntPtr maxItems);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_set_max_items", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_max_items_win(UIntPtr maxItems);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_set_max_items", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_max_items_linux(UIntPtr maxItems);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_set_max_items", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_max_items_linux(UIntPtr maxItems);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_set_max_items", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_max_items_mac(UIntPtr maxItems);
+#else
     [DllImport(MacLib, EntryPoint = "cache_set_max_items", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_max_items_mac(UIntPtr maxItems);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_get_max_items", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial UIntPtr cache_get_max_items_win();
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_get_max_items", CallingConvention = CallingConvention.Cdecl)]
     private static extern UIntPtr cache_get_max_items_win();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_get_max_items", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial UIntPtr cache_get_max_items_linux();
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_get_max_items", CallingConvention = CallingConvention.Cdecl)]
     private static extern UIntPtr cache_get_max_items_linux();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_get_max_items", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial UIntPtr cache_get_max_items_mac();
+#else
     [DllImport(MacLib, EntryPoint = "cache_get_max_items", CallingConvention = CallingConvention.Cdecl)]
     private static extern UIntPtr cache_get_max_items_mac();
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_len", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial UIntPtr cache_len_win();
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_len", CallingConvention = CallingConvention.Cdecl)]
     private static extern UIntPtr cache_len_win();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_len", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial UIntPtr cache_len_linux();
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_len", CallingConvention = CallingConvention.Cdecl)]
     private static extern UIntPtr cache_len_linux();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_len", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial UIntPtr cache_len_mac();
+#else
     [DllImport(MacLib, EntryPoint = "cache_len", CallingConvention = CallingConvention.Cdecl)]
     private static extern UIntPtr cache_len_mac();
+#endif
 
 
     // TTL
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_set_with_ttl", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_with_ttl_win(string key, byte[] val, UIntPtr len, ulong ttlMs);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_set_with_ttl", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_with_ttl_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len, ulong ttlMs);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_set_with_ttl", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_with_ttl_linux(string key, byte[] val, UIntPtr len, ulong ttlMs);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_set_with_ttl", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_with_ttl_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len, ulong ttlMs);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_set_with_ttl", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_with_ttl_mac(string key, byte[] val, UIntPtr len, ulong ttlMs);
+#else
     [DllImport(MacLib, EntryPoint = "cache_set_with_ttl", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_with_ttl_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte[] val, UIntPtr len, ulong ttlMs);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_expire", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_expire_win(string key, ulong ttlMs);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_expire", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_expire_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, ulong ttlMs);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_expire", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_expire_linux(string key, ulong ttlMs);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_expire", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_expire_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, ulong ttlMs);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_expire", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_expire_mac(string key, ulong ttlMs);
+#else
     [DllImport(MacLib, EntryPoint = "cache_expire", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_expire_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, ulong ttlMs);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_ttl", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial long cache_ttl_win(string key);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_ttl", CallingConvention = CallingConvention.Cdecl)]
     private static extern long cache_ttl_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_ttl", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial long cache_ttl_linux(string key);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_ttl", CallingConvention = CallingConvention.Cdecl)]
     private static extern long cache_ttl_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_ttl", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial long cache_ttl_mac(string key);
+#else
     [DllImport(MacLib, EntryPoint = "cache_ttl", CallingConvention = CallingConvention.Cdecl)]
     private static extern long cache_ttl_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+#endif
 
 
     // AOF
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_aof_enable", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_aof_enable_win(string path);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_aof_enable", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_aof_enable_win([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_aof_enable", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_aof_enable_linux(string path);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_aof_enable", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_aof_enable_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_aof_enable", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_aof_enable_mac(string path);
+#else
     [DllImport(MacLib, EntryPoint = "cache_aof_enable", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_aof_enable_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_aof_disable", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_aof_disable_win();
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_aof_disable", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_aof_disable_win();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_aof_disable", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_aof_disable_linux();
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_aof_disable", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_aof_disable_linux();
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_aof_disable", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_aof_disable_mac();
+#else
     [DllImport(MacLib, EntryPoint = "cache_aof_disable", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_aof_disable_mac();
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_aof_load", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_aof_load_win(string path);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_aof_load", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_aof_load_win([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_aof_load", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_aof_load_linux(string path);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_aof_load", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_aof_load_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_aof_load", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial int cache_aof_load_mac(string path);
+#else
     [DllImport(MacLib, EntryPoint = "cache_aof_load", CallingConvention = CallingConvention.Cdecl)]
     private static extern int cache_aof_load_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+#endif
 
 
     // Binary-safe keys
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_set_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_b_win(byte[] key, UIntPtr keyLen, byte[] val, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_set_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_b_win(byte[] key, UIntPtr keyLen, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_set_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_b_linux(byte[] key, UIntPtr keyLen, byte[] val, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_set_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_b_linux(byte[] key, UIntPtr keyLen, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_set_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_set_b_mac(byte[] key, UIntPtr keyLen, byte[] val, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_set_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_set_b_mac(byte[] key, UIntPtr keyLen, byte[] val, UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_get_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_get_b_win(byte[] key, UIntPtr keyLen, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_get_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_get_b_win(byte[] key, UIntPtr keyLen, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_get_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_get_b_linux(byte[] key, UIntPtr keyLen, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_get_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_get_b_linux(byte[] key, UIntPtr keyLen, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_get_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_get_b_mac(byte[] key, UIntPtr keyLen, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_get_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_get_b_mac(byte[] key, UIntPtr keyLen, out UIntPtr len);
+#endif
 
 
     // Binary-safe zero-allocation get: caller provides destination buffer
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_get_into_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial long cache_get_into_b_win(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_get_into_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern unsafe long cache_get_into_b_win(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_get_into_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial long cache_get_into_b_linux(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_get_into_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern unsafe long cache_get_into_b_linux(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_get_into_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial long cache_get_into_b_mac(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#else
     [DllImport(MacLib, EntryPoint = "cache_get_into_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern unsafe long cache_get_into_b_mac(byte* key, UIntPtr keyLen, byte* dst, UIntPtr dstLen);
+#endif
 
 
     // Binary-safe zero-copy get: returns a lease handle + pointer/len
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_get_lease_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial IntPtr cache_get_lease_b_win(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_get_lease_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern unsafe IntPtr cache_get_lease_b_win(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_get_lease_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial IntPtr cache_get_lease_b_linux(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_get_lease_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern unsafe IntPtr cache_get_lease_b_linux(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_get_lease_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe partial IntPtr cache_get_lease_b_mac(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+#else
     [DllImport(MacLib, EntryPoint = "cache_get_lease_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern unsafe IntPtr cache_get_lease_b_mac(byte* key, UIntPtr keyLen, out IntPtr outPtr, out UIntPtr outLen);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_bytes_lease_free", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_bytes_lease_free_win(IntPtr handle);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_bytes_lease_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_bytes_lease_free_win(IntPtr handle);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_bytes_lease_free", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_bytes_lease_free_linux(IntPtr handle);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_bytes_lease_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_bytes_lease_free_linux(IntPtr handle);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_bytes_lease_free", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_bytes_lease_free_mac(IntPtr handle);
+#else
     [DllImport(MacLib, EntryPoint = "cache_bytes_lease_free", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_bytes_lease_free_mac(IntPtr handle);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_remove_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_remove_b_win(byte[] key, UIntPtr keyLen);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_remove_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_b_win(byte[] key, UIntPtr keyLen);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_remove_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_remove_b_linux(byte[] key, UIntPtr keyLen);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_remove_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_b_linux(byte[] key, UIntPtr keyLen);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_remove_b", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_remove_b_mac(byte[] key, UIntPtr keyLen);
+#else
     [DllImport(MacLib, EntryPoint = "cache_remove_b", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_b_mac(byte[] key, UIntPtr keyLen);
+#endif
 
 
     public static void SetMaxItems(int maxItems)

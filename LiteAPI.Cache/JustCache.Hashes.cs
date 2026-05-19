@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace LiteAPI.Cache;
@@ -8,34 +9,88 @@ public static partial class JustCache
 {
     #region Hashes (HSET/HGET/HGETALL)
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_hset", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_hset_win(string key, string field, byte[] val, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_hset", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_hset_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string field, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_hset", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_hset_linux(string key, string field, byte[] val, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_hset", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_hset_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string field, byte[] val, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_hset", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_hset_mac(string key, string field, byte[] val, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_hset", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_hset_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string field, byte[] val, UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_hget", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_hget_win(string key, string field, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_hget", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_hget_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string field, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_hget", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_hget_linux(string key, string field, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_hget", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_hget_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string field, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_hget", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_hget_mac(string key, string field, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_hget", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_hget_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string field, out UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_hgetall", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_hgetall_win(string key, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_hgetall", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_hgetall_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_hgetall", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_hgetall_linux(string key, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_hgetall", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_hgetall_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_hgetall", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_hgetall_mac(string key, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_hgetall", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_hgetall_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key, out UIntPtr len);
+#endif
 
 
     public static void HSet(string key, string field, byte[] value)

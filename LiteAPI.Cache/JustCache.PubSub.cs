@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace LiteAPI.Cache;
@@ -8,44 +9,116 @@ public static partial class JustCache
 {
     #region Phase3: Pub/Sub
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_pubsub_subscribe", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_pubsub_subscribe_win(string channel);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_pubsub_subscribe", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_pubsub_subscribe_win([MarshalAs(UnmanagedType.LPUTF8Str)] string channel);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_pubsub_subscribe", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_pubsub_subscribe_linux(string channel);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_pubsub_subscribe", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_pubsub_subscribe_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string channel);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_pubsub_subscribe", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_pubsub_subscribe_mac(string channel);
+#else
     [DllImport(MacLib, EntryPoint = "cache_pubsub_subscribe", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_pubsub_subscribe_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string channel);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_pubsub_unsubscribe", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_pubsub_unsubscribe_win(ulong subId);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_pubsub_unsubscribe", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_pubsub_unsubscribe_win(ulong subId);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_pubsub_unsubscribe", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_pubsub_unsubscribe_linux(ulong subId);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_pubsub_unsubscribe", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_pubsub_unsubscribe_linux(ulong subId);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_pubsub_unsubscribe", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial void cache_pubsub_unsubscribe_mac(ulong subId);
+#else
     [DllImport(MacLib, EntryPoint = "cache_pubsub_unsubscribe", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_pubsub_unsubscribe_mac(ulong subId);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_pubsub_publish", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_pubsub_publish_win(string channel, byte[] payload, UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_pubsub_publish", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_pubsub_publish_win([MarshalAs(UnmanagedType.LPUTF8Str)] string channel, byte[] payload, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_pubsub_publish", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_pubsub_publish_linux(string channel, byte[] payload, UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_pubsub_publish", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_pubsub_publish_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string channel, byte[] payload, UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_pubsub_publish", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial ulong cache_pubsub_publish_mac(string channel, byte[] payload, UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_pubsub_publish", CallingConvention = CallingConvention.Cdecl)]
     private static extern ulong cache_pubsub_publish_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string channel, byte[] payload, UIntPtr len);
+#endif
 
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(WindowsLib, EntryPoint = "cache_pubsub_poll", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_pubsub_poll_win(ulong subId, out UIntPtr len);
+#else
     [DllImport(WindowsLib, EntryPoint = "cache_pubsub_poll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_pubsub_poll_win(ulong subId, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(LinuxLib, EntryPoint = "cache_pubsub_poll", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_pubsub_poll_linux(ulong subId, out UIntPtr len);
+#else
     [DllImport(LinuxLib, EntryPoint = "cache_pubsub_poll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_pubsub_poll_linux(ulong subId, out UIntPtr len);
+#endif
 
+    #if NET7_0_OR_GREATER
+    [LibraryImport(MacLib, EntryPoint = "cache_pubsub_poll", StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static partial IntPtr cache_pubsub_poll_mac(ulong subId, out UIntPtr len);
+#else
     [DllImport(MacLib, EntryPoint = "cache_pubsub_poll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr cache_pubsub_poll_mac(ulong subId, out UIntPtr len);
+#endif
 
 
     public readonly record struct PubSubMessage(string Channel, byte[] Payload)
