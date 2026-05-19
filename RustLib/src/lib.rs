@@ -1,5 +1,8 @@
 mod aof;
 mod expiry;
+mod jsonpath;
+mod notifications;
+mod pubsub;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
@@ -7,7 +10,7 @@ use std::num::NonZeroUsize;
 use std::os::raw::{c_char, c_uchar};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lru::LruCache;
@@ -24,6 +27,9 @@ use aof::{
     AOF_OP_SET, AOF_OP_SET_B, AOF_OP_XADD, AOF_OP_ZADD,
 };
 use expiry::{schedule_expiry, ExpiryEntry, ExpiryKey, EXPIRY_HEAP};
+use jsonpath::{json_get_at_path, json_set_at_path, parse_json_path};
+use notifications::{notify_evicted, notify_expired, NOTIFY_QUEUE};
+use pubsub::{PubMessage, PUBSUB};
 
 /// Catch panics at the FFI boundary so they never unwind into managed code
 /// (which would be undefined behavior). Each `pub extern "C" fn` runs its
@@ -113,7 +119,7 @@ unsafe fn to_bytes(ptr: *const c_uchar, len: usize) -> Vec<u8> {
     std::slice::from_raw_parts(ptr, len).to_vec()
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_millis(0))
@@ -331,60 +337,6 @@ fn start_expiry_thread_once() {
         });
     });
 }
-
-// --- Phase3: Pub/Sub + Keyspace Notifications ---
-
-#[derive(Clone)]
-struct NotifyEvent {
-    kind: u8,
-    key: String,
-    at_ms: u64,
-}
-
-const NOTIFY_KIND_EXPIRED: u8 = 1;
-const NOTIFY_KIND_EVICTED: u8 = 2;
-
-static NOTIFY_QUEUE: Lazy<Mutex<VecDeque<NotifyEvent>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
-
-fn notify_expired(key: &str) {
-    let mut q = NOTIFY_QUEUE.lock().unwrap();
-    q.push_back(NotifyEvent {
-        kind: NOTIFY_KIND_EXPIRED,
-        key: key.to_string(),
-        at_ms: now_ms(),
-    });
-}
-
-fn notify_evicted(key: &str) {
-    let mut q = NOTIFY_QUEUE.lock().unwrap();
-    q.push_back(NotifyEvent {
-        kind: NOTIFY_KIND_EVICTED,
-        key: key.to_string(),
-        at_ms: now_ms(),
-    });
-}
-
-#[derive(Clone)]
-struct PubMessage {
-    channel: String,
-    payload: Vec<u8>,
-}
-
-struct PubSubState {
-    next_id: u64,
-    subs: HashMap<u64, String>,
-    channels: HashMap<String, Vec<u64>>,
-    queues: HashMap<u64, VecDeque<PubMessage>>,
-}
-
-static PUBSUB: Lazy<Mutex<PubSubState>> = Lazy::new(|| {
-    Mutex::new(PubSubState {
-        next_id: 1,
-        subs: HashMap::new(),
-        channels: HashMap::new(),
-        queues: HashMap::new(),
-    })
-});
 
 fn apply_set_internal(state: &mut CacheState, key: String, val: Vec<u8>) {
     put_entry_with_lru(
@@ -1212,143 +1164,6 @@ pub extern "C" fn cache_set_b(key: *const c_uchar, key_len: usize, value: *const
 }
 
 // --- Phase4: JSON Path Support (basic) ---
-
-#[derive(Debug)]
-enum JsonPathToken {
-    Field(String),
-    Index(usize),
-}
-
-fn parse_json_path(path: &str) -> Option<Vec<JsonPathToken>> {
-    let p = path.trim();
-    if p.is_empty() {
-        return None;
-    }
-
-    let mut i = 0usize;
-    let chars: Vec<char> = p.chars().collect();
-
-    if chars.get(0) == Some(&'$') {
-        i += 1;
-    }
-
-    let mut tokens = Vec::new();
-
-    while i < chars.len() {
-        match chars[i] {
-            '.' => {
-                i += 1;
-                let start = i;
-                while i < chars.len() {
-                    let c = chars[i];
-                    if c == '.' || c == '[' {
-                        break;
-                    }
-                    i += 1;
-                }
-                if i == start {
-                    return None;
-                }
-                let field: String = chars[start..i].iter().collect();
-                tokens.push(JsonPathToken::Field(field));
-            }
-            '[' => {
-                i += 1;
-                let start = i;
-                while i < chars.len() && chars[i].is_ascii_digit() {
-                    i += 1;
-                }
-                if i == start || i >= chars.len() || chars[i] != ']' {
-                    return None;
-                }
-                let num_str: String = chars[start..i].iter().collect();
-                i += 1; // consume ']'
-                let idx = num_str.parse::<usize>().ok()?;
-                tokens.push(JsonPathToken::Index(idx));
-            }
-            _ => {
-                // allow path starting with field name without leading dot
-                let start = i;
-                while i < chars.len() {
-                    let c = chars[i];
-                    if c == '.' || c == '[' {
-                        break;
-                    }
-                    i += 1;
-                }
-                if i == start {
-                    return None;
-                }
-                let field: String = chars[start..i].iter().collect();
-                tokens.push(JsonPathToken::Field(field));
-            }
-        }
-    }
-
-    Some(tokens)
-}
-
-fn json_get_at_path<'a>(root: &'a JsonValue, path: &[JsonPathToken]) -> Option<&'a JsonValue> {
-    let mut cur = root;
-    for t in path {
-        match t {
-            JsonPathToken::Field(f) => {
-                cur = cur.get(f)?;
-            }
-            JsonPathToken::Index(idx) => {
-                cur = cur.get(*idx)?;
-            }
-        }
-    }
-    Some(cur)
-}
-
-fn json_set_at_path(root: &mut JsonValue, path: &[JsonPathToken], new_val: JsonValue) -> bool {
-    if path.is_empty() {
-        *root = new_val;
-        return true;
-    }
-
-    let mut cur = root;
-    for (pos, t) in path.iter().enumerate() {
-        let last = pos == path.len() - 1;
-        match t {
-            JsonPathToken::Field(f) => {
-                if last {
-                    if !cur.is_object() {
-                        *cur = JsonValue::Object(Default::default());
-                    }
-                    if let Some(obj) = cur.as_object_mut() {
-                        obj.insert(f.clone(), new_val);
-                        return true;
-                    }
-                    return false;
-                }
-
-                if !cur.is_object() {
-                    *cur = JsonValue::Object(Default::default());
-                }
-                let obj = cur.as_object_mut().unwrap();
-                cur = obj.entry(f.clone()).or_insert(JsonValue::Object(Default::default()));
-            }
-            JsonPathToken::Index(idx) => {
-                if !cur.is_array() {
-                    *cur = JsonValue::Array(Vec::new());
-                }
-                let arr = cur.as_array_mut().unwrap();
-                while arr.len() <= *idx {
-                    arr.push(JsonValue::Null);
-                }
-                if last {
-                    arr[*idx] = new_val;
-                    return true;
-                }
-                cur = &mut arr[*idx];
-            }
-        }
-    }
-    false
-}
 
 #[no_mangle]
 pub extern "C" fn cache_json_get(key: *const c_char, path: *const c_char, out_len: *mut usize) -> *mut c_uchar {
