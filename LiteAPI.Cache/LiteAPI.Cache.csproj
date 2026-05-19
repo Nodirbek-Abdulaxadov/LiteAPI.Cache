@@ -10,9 +10,9 @@
     <Description>High-performance GC-free cache powered by Rust and C# interop</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache</RepositoryUrl>
-    <Version>2.1.0</Version>
+    <Version>2.2.0</Version>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
-    <PackageReleaseNotes>binary-key fast path + zero-copy lease API for large payload reads</PackageReleaseNotes>
+    <PackageReleaseNotes>Sharded cache (16 RwLocks) + timing-wheel expiry + LibraryImport on net7+ + TryPeek read-locked hot path + VecDeque-backed lists (O(1) LPUSH). Panic-safe FFI, absolute-TTL AOF, cached platform dispatch, hardened native loader.</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
