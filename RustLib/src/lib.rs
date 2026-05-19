@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
+mod aof;
+mod expiry;
+
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
-use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::os::raw::{c_char, c_uchar};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -11,6 +13,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
+
+use aof::{
+    aof_write_clear, aof_write_expire_at, aof_write_hset, aof_write_lpush,
+    aof_write_remove, aof_write_remove_b, aof_write_sadd, aof_write_set,
+    aof_write_set_b, aof_write_xadd, aof_write_zadd, read_exact_f64,
+    read_exact_string, read_exact_u32, read_exact_u64, read_exact_u8,
+    read_exact_vec, AOF_FILE, AOF_OP_CLEAR, AOF_OP_EXPIRE, AOF_OP_EXPIRE_AT,
+    AOF_OP_HSET, AOF_OP_LPUSH, AOF_OP_REMOVE, AOF_OP_REMOVE_B, AOF_OP_SADD,
+    AOF_OP_SET, AOF_OP_SET_B, AOF_OP_XADD, AOF_OP_ZADD,
+};
+use expiry::{schedule_expiry, ExpiryEntry, ExpiryKey, EXPIRY_HEAP};
 
 /// Catch panics at the FFI boundary so they never unwind into managed code
 /// (which would be undefined behavior). Each `pub extern "C" fn` runs its
@@ -82,58 +95,8 @@ static CACHE: Lazy<RwLock<CacheState>> = Lazy::new(|| {
 });
 
 static EXPIRY_THREAD_STARTED: OnceLock<()> = OnceLock::new();
-static AOF_FILE: Lazy<Mutex<Option<std::fs::File>>> = Lazy::new(|| Mutex::new(None));
 
 static STREAM_ID: AtomicU64 = AtomicU64::new(1);
-
-// --- Timing wheel (min-heap of pending expiries) ---
-//
-// Before: the expiry thread woke every 250ms and walked the entire cache
-// map under a write lock, hunting for expired entries — O(N) per tick,
-// independent of how many keys actually had TTL. With 100k keys and
-// most TTL-less, that was wasted work + lock contention.
-//
-// Now: every entry with a TTL also pushes a (expires_at_ms, key) record
-// into a min-heap. The expiry thread peeks the heap top, sleeps until
-// that timestamp, then pops everything that has come due and reaps it
-// from the cache. Stale heap records (key updated with a new TTL, or
-// removed, or overwritten without TTL) are validated lazily and dropped.
-//
-// Worst-case the heap holds 2 records per active key (old + new after a
-// TTL refresh); the validator throws away the stale one when it pops.
-#[derive(Eq, PartialEq)]
-enum ExpiryKey {
-    Str(String),
-    Bytes(Vec<u8>),
-}
-
-#[derive(Eq, PartialEq)]
-struct ExpiryEntry {
-    expires_at_ms: u64,
-    key: ExpiryKey,
-}
-
-impl Ord for ExpiryEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // BinaryHeap is a max-heap by default; reverse the comparison so
-        // the *earliest* expiry sits at the top.
-        other.expires_at_ms.cmp(&self.expires_at_ms)
-    }
-}
-impl PartialOrd for ExpiryEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-static EXPIRY_HEAP: Lazy<Mutex<BinaryHeap<ExpiryEntry>>> =
-    Lazy::new(|| Mutex::new(BinaryHeap::new()));
-
-fn schedule_expiry(key: ExpiryKey, expires_at_ms: u64) {
-    if let Ok(mut heap) = EXPIRY_HEAP.lock() {
-        heap.push(ExpiryEntry { expires_at_ms, key });
-    }
-}
 
 // Helper for string conversion
 unsafe fn to_string(ptr: *const c_char) -> String {
@@ -369,141 +332,6 @@ fn start_expiry_thread_once() {
     });
 }
 
-// --- AOF (Append Only File) ---
-
-const AOF_OP_SET: u8 = 1;
-const AOF_OP_REMOVE: u8 = 2;
-const AOF_OP_CLEAR: u8 = 3;
-const AOF_OP_EXPIRE: u8 = 4;
-const AOF_OP_HSET: u8 = 5;
-const AOF_OP_LPUSH: u8 = 6;
-const AOF_OP_SADD: u8 = 7;
-const AOF_OP_ZADD: u8 = 8;
-const AOF_OP_XADD: u8 = 9;
-
-// Binary-key variants (avoid encoding key bytes into strings)
-const AOF_OP_SET_B: u8 = 10;
-const AOF_OP_REMOVE_B: u8 = 11;
-
-// New: absolute expiry — fixes a long-standing bug where the legacy
-// `AOF_OP_EXPIRE` opcode stored a *relative* `ttl_ms` and replay would
-// reset the TTL clock to now+ttl on every restart (a key with a 60s TTL
-// set 10 minutes ago would get another 60s after restart).
-//
-// We keep reading the old opcode for backward compatibility but always
-// write the new one going forward.
-const AOF_OP_EXPIRE_AT: u8 = 12;
-
-fn aof_write(buf: &[u8]) {
-    let mut guard = AOF_FILE.lock().unwrap();
-    let Some(file) = guard.as_mut() else { return; };
-    let _ = file.write_all(buf);
-    let _ = file.flush();
-}
-
-fn aof_write_set(key: &str, val: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 4 + val.len());
-    buf.push(AOF_OP_SET);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
-    buf.extend_from_slice(val);
-    aof_write(&buf);
-}
-
-fn aof_write_set_b(key: &[u8], val: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 4 + val.len());
-    buf.push(AOF_OP_SET_B);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key);
-    buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
-    buf.extend_from_slice(val);
-    aof_write(&buf);
-}
-
-fn aof_write_remove(key: &str) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len());
-    buf.push(AOF_OP_REMOVE);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    aof_write(&buf);
-}
-
-fn aof_write_remove_b(key: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len());
-    buf.push(AOF_OP_REMOVE_B);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key);
-    aof_write(&buf);
-}
-
-fn aof_write_clear() {
-    aof_write(&[AOF_OP_CLEAR]);
-}
-
-fn aof_write_expire_at(key: &str, expires_at_ms: u64) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 8);
-    buf.push(AOF_OP_EXPIRE_AT);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&expires_at_ms.to_le_bytes());
-    aof_write(&buf);
-}
-
-fn aof_write_hset(key: &str, field: &str, val: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 4 + field.len() + 4 + val.len());
-    buf.push(AOF_OP_HSET);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&(field.len() as u32).to_le_bytes());
-    buf.extend_from_slice(field.as_bytes());
-    buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
-    buf.extend_from_slice(val);
-    aof_write(&buf);
-}
-
-fn aof_write_lpush(key: &str, val: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 4 + val.len());
-    buf.push(AOF_OP_LPUSH);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
-    buf.extend_from_slice(val);
-    aof_write(&buf);
-}
-
-fn aof_write_sadd(key: &str, val: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 4 + val.len());
-    buf.push(AOF_OP_SADD);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
-    buf.extend_from_slice(val);
-    aof_write(&buf);
-}
-
-fn aof_write_zadd(key: &str, score: f64, member: &str) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 8 + 4 + member.len());
-    buf.push(AOF_OP_ZADD);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&score.to_le_bytes());
-    buf.extend_from_slice(&(member.len() as u32).to_le_bytes());
-    buf.extend_from_slice(member.as_bytes());
-    aof_write(&buf);
-}
-
-fn aof_write_xadd(key: &str, id: u64, payload: &[u8]) {
-    let mut buf = Vec::with_capacity(1 + 4 + key.len() + 8 + 4 + payload.len());
-    buf.push(AOF_OP_XADD);
-    buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    buf.extend_from_slice(&id.to_le_bytes());
-    buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    buf.extend_from_slice(payload);
-    aof_write(&buf);
-}
-
 // --- Phase3: Pub/Sub + Keyspace Notifications ---
 
 #[derive(Clone)]
@@ -557,41 +385,6 @@ static PUBSUB: Lazy<Mutex<PubSubState>> = Lazy::new(|| {
         queues: HashMap::new(),
     })
 });
-
-fn read_exact_u8(r: &mut impl Read) -> Option<u8> {
-    let mut b = [0u8; 1];
-    r.read_exact(&mut b).ok()?;
-    Some(b[0])
-}
-
-fn read_exact_u32(r: &mut impl Read) -> Option<u32> {
-    let mut b = [0u8; 4];
-    r.read_exact(&mut b).ok()?;
-    Some(u32::from_le_bytes(b))
-}
-
-fn read_exact_u64(r: &mut impl Read) -> Option<u64> {
-    let mut b = [0u8; 8];
-    r.read_exact(&mut b).ok()?;
-    Some(u64::from_le_bytes(b))
-}
-
-fn read_exact_f64(r: &mut impl Read) -> Option<f64> {
-    let mut b = [0u8; 8];
-    r.read_exact(&mut b).ok()?;
-    Some(f64::from_le_bytes(b))
-}
-
-fn read_exact_vec(r: &mut impl Read, len: usize) -> Option<Vec<u8>> {
-    let mut b = vec![0u8; len];
-    r.read_exact(&mut b).ok()?;
-    Some(b)
-}
-
-fn read_exact_string(r: &mut impl Read, len: usize) -> Option<String> {
-    let bytes = read_exact_vec(r, len)?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
-}
 
 fn apply_set_internal(state: &mut CacheState, key: String, val: Vec<u8>) {
     put_entry_with_lru(
