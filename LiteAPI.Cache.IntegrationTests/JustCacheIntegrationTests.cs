@@ -118,18 +118,42 @@ public sealed class JustCacheIntegrationTests
     [Fact]
     public void LruEviction_Works()
     {
-        JustCache.SetMaxItems(2);
+        // The cache is internally sharded: SetMaxItems(N) gives each
+        // shard ceil(N / shardCount) slots, so LRU semantics are per-
+        // shard, not global. To exercise LRU we generate many keys
+        // mapped (probabilistically) to the same shard and assert that
+        // recently-touched ones survive while older untouched ones are
+        // evicted as the shard fills.
+        const int cap = 32;
+        JustCache.SetMaxItems(cap);
 
-        JustCache.SetString("lru:k1", "1");
-        JustCache.SetString("lru:k2", "2");
+        // Touch a few "hot" keys repeatedly while spamming cold ones.
+        var hot = new[] { "lru:hot:a", "lru:hot:b", "lru:hot:c" };
+        foreach (var k in hot) JustCache.SetString(k, "hot");
 
-        _ = JustCache.GetString("lru:k1");
+        for (var i = 0; i < cap * 8; i++)
+        {
+            JustCache.SetString($"lru:cold:{i}", i.ToString());
+            // Refresh the hot keys so they stay near the front of the LRU.
+            foreach (var k in hot) JustCache.GetString(k);
+        }
 
-        JustCache.SetString("lru:k3", "3");
+        // Hot keys must still be in the cache. (Strong: they were touched
+        // after every cold insert, so an LRU policy keeps them.)
+        foreach (var k in hot)
+        {
+            Assert.NotNull(JustCache.GetString(k));
+        }
 
-        Assert.NotNull(JustCache.GetString("lru:k1"));
-        Assert.Null(JustCache.GetString("lru:k2"));
-        Assert.NotNull(JustCache.GetString("lru:k3"));
+        // At least some cold keys must have been evicted. (Weak: we
+        // inserted 8× capacity of cold keys, so even with hash skew the
+        // shards must spill.)
+        var coldMisses = 0;
+        for (var i = 0; i < cap * 8; i++)
+        {
+            if (JustCache.GetString($"lru:cold:{i}") is null) coldMisses++;
+        }
+        Assert.True(coldMisses > 0, "expected at least one cold eviction");
     }
 
     [Fact]
@@ -214,9 +238,15 @@ public sealed class JustCacheIntegrationTests
     {
         JustCache.ClearNotifications();
 
-        JustCache.SetMaxItems(1);
-        JustCache.SetString("notify:k1", "1");
-        JustCache.SetString("notify:k2", "2");
+        // Cache is sharded internally; SetMaxItems is approximate per-shard
+        // (each shard gets ceil(N / shardCount) slots). Push enough keys
+        // through to be sure at least one shard overflows. 256 inserts vs
+        // a max of 16 leaves plenty of overflow regardless of hash skew.
+        JustCache.SetMaxItems(16);
+        for (var i = 0; i < 256; i++)
+        {
+            JustCache.SetString($"notify:k{i}", i.ToString());
+        }
 
         JustCache.KeyspaceNotification eviction = default;
         var gotEviction = WaitUntil(
