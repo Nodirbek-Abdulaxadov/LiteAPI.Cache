@@ -44,11 +44,11 @@ public static partial class JustCache
         ArgumentNullException.ThrowIfNull(value);
 
         var len = (UIntPtr)value.Length;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_lpush_win(key, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_lpush_linux(key, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_lpush_mac(key, value, len);
         else
             throw new PlatformNotSupportedException();
@@ -65,11 +65,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_rpop_win(key, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_rpop_linux(key, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_rpop_mac(key, out len);
         else
             throw new PlatformNotSupportedException();
@@ -91,11 +91,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_lrange_win(key, start, end, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_lrange_linux(key, start, end, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_lrange_mac(key, start, end, out len);
         else
             throw new PlatformNotSupportedException();

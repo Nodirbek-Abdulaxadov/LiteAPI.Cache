@@ -34,11 +34,11 @@ public static partial class JustCache
 
         var len = (UIntPtr)value.Length;
         int res;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             res = cache_sadd_win(key, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             res = cache_sadd_linux(key, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             res = cache_sadd_mac(key, value, len);
         else
             throw new PlatformNotSupportedException();
@@ -59,11 +59,11 @@ public static partial class JustCache
 
         var len = (UIntPtr)value.Length;
         int res;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             res = cache_sismember_win(key, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             res = cache_sismember_linux(key, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             res = cache_sismember_mac(key, value, len);
         else
             throw new PlatformNotSupportedException();

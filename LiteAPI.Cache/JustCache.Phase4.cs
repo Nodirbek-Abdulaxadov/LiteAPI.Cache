@@ -22,11 +22,11 @@ public static partial class JustCache
         UIntPtr len;
 
         IntPtr ptr;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_json_get_win(key, path, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_json_get_linux(key, path, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_json_get_mac(key, path, out len);
         else
             throw new PlatformNotSupportedException();
@@ -60,11 +60,11 @@ public static partial class JustCache
         var len = (UIntPtr)bytes.Length;
 
         int rc;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             rc = cache_json_set_win(key, path, bytes, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             rc = cache_json_set_linux(key, path, bytes, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             rc = cache_json_set_mac(key, path, bytes, len);
         else
             throw new PlatformNotSupportedException();
@@ -88,11 +88,11 @@ public static partial class JustCache
     public static bool CreateNumericIndex(string field)
     {
         int rc;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             rc = cache_index_create_numeric_win(field);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             rc = cache_index_create_numeric_linux(field);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             rc = cache_index_create_numeric_mac(field);
         else
             throw new PlatformNotSupportedException();
@@ -114,11 +114,11 @@ public static partial class JustCache
         UIntPtr len;
 
         IntPtr ptr;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_find_win(query, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_find_linux(query, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_find_mac(query, out len);
         else
             throw new PlatformNotSupportedException();
@@ -178,11 +178,11 @@ public static partial class JustCache
         UIntPtr len;
 
         IntPtr ptr;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_eval_win(script, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_eval_linux(script, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_eval_mac(script, out len);
         else
             throw new PlatformNotSupportedException();

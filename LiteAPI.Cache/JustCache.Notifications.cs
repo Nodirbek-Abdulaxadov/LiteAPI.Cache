@@ -41,11 +41,11 @@ public static partial class JustCache
 
     public static void ClearNotifications()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_notifications_clear_win();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_notifications_clear_linux();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_notifications_clear_mac();
         else
             throw new PlatformNotSupportedException();
@@ -58,11 +58,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_notifications_poll_win(out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_notifications_poll_linux(out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_notifications_poll_mac(out len);
         else
             throw new PlatformNotSupportedException();

@@ -10,32 +10,34 @@ public static partial class JustCache
     private const string LinuxLib = "librust_cache.so";
     private const string MacLib = "librust_cache.dylib";
 
-    private static string GetLibraryName()
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return WindowsLib;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            return LinuxLib;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            return MacLib;
+    // Resolved once at type init; replaces per-call `RuntimeInformation.IsOSPlatform`
+    // branches across every native dispatch wrapper. Saves ~3 method calls + 3
+    // string comparisons per cache operation.
+    internal enum Platform { Windows, Linux, OSX }
+    internal static readonly Platform _platform = DetectPlatform();
 
+    private static Platform DetectPlatform()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return Platform.Windows;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))   return Platform.Linux;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))     return Platform.OSX;
         throw new PlatformNotSupportedException("Unknown OS");
     }
+
+    private static string GetLibraryName() => _platform switch
+    {
+        Platform.Windows => WindowsLib,
+        Platform.Linux   => LinuxLib,
+        Platform.OSX     => MacLib,
+        _ => throw new PlatformNotSupportedException("Unknown OS"),
+    };
 
     static JustCache()
     {
         var libName = GetLibraryName();
         var baseDir = AppContext.BaseDirectory;
 
-        // Prefer app-local deployment (e.g. TestApp output).
-        var directPath = Path.Combine(baseDir, libName);
-        if (File.Exists(directPath))
-        {
-            NativeLibrary.Load(directPath);
-            return;
-        }
-
-        // NuGet native assets are usually under runtimes/<rid>/native/.
+        // 1. NuGet native assets (preferred — RID-specific, signed-by-CI).
         var ridPath = Path.Combine(baseDir, "runtimes", GetRuntimeRid(), "native", libName);
         if (File.Exists(ridPath))
         {
@@ -43,31 +45,37 @@ public static partial class JustCache
             return;
         }
 
-        // Last resort: rely on OS loader search paths.
-        if (NativeLibrary.TryLoad(libName, out _))
+        // 2. App-local deployment (dev workflow: copy from RustLib/target/release).
+        var directPath = Path.Combine(baseDir, libName);
+        if (File.Exists(directPath))
+        {
+            NativeLibrary.Load(directPath);
             return;
+        }
 
+        // No OS-search-path fallback: prevents an attacker-placed
+        // `rust_cache.dll` in System32 / LD_LIBRARY_PATH from being loaded
+        // ahead of the bundled binary.
         throw new DllNotFoundException(
-            $"Unable to load native library '{libName}'. Looked in: '{directPath}' and '{ridPath}'.");
+            $"Unable to load native library '{libName}'. Looked in: '{ridPath}' and '{directPath}'.");
     }
 
     private static string GetRuntimeRid()
     {
         var arch = RuntimeInformation.OSArchitecture switch
         {
-            Architecture.X64 => "x64",
+            Architecture.X64   => "x64",
             Architecture.Arm64 => "arm64",
             _ => throw new PlatformNotSupportedException($"Unsupported architecture: {RuntimeInformation.OSArchitecture}")
         };
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return $"win-{arch}";
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            return $"linux-{arch}";
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            return $"osx-{arch}";
-
-        throw new PlatformNotSupportedException("Unknown OS");
+        return _platform switch
+        {
+            Platform.Windows => $"win-{arch}",
+            Platform.Linux   => $"linux-{arch}",
+            Platform.OSX     => $"osx-{arch}",
+            _ => throw new PlatformNotSupportedException("Unknown OS"),
+        };
     }
 
     #endregion
@@ -83,11 +91,11 @@ public static partial class JustCache
 
     public static void Initialize()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_init_win();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_init_linux();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_init_mac();
         else
             throw new PlatformNotSupportedException("Unknown OS");
@@ -110,11 +118,11 @@ public static partial class JustCache
     {
         var len = (UIntPtr)val.Length;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_set_win(key, val, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_set_linux(key, val, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_set_mac(key, val, len);
 
         JustCacheEventSource.Log.ReportSet(val.Length);
@@ -156,11 +164,11 @@ public static partial class JustCache
         UIntPtr len;
 
         IntPtr ptr;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_get_win(key, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_get_linux(key, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_get_mac(key, out len);
         else
             throw new PlatformNotSupportedException();
@@ -187,11 +195,11 @@ public static partial class JustCache
             if (ptr == IntPtr.Zero || len == UIntPtr.Zero)
                 return;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_platform == Platform.Windows)
                 cache_free_win(ptr, len);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            else if (_platform == Platform.Linux)
                 cache_free_linux(ptr, len);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            else if (_platform == Platform.OSX)
                 cache_free_mac(ptr, len);
         }
         catch (EntryPointNotFoundException) { }
@@ -248,33 +256,33 @@ public static partial class JustCache
     #region  Clear Methods
 
     // Windows
-    [DllImport("rust_cache.dll", EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(WindowsLib, EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_win([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
 
-    [DllImport("rust_cache.dll", EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(WindowsLib, EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_win();
 
     // Linux
-    [DllImport("librust_cache.so", EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(LinuxLib, EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_linux([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
 
-    [DllImport("librust_cache.so", EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(LinuxLib, EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_linux();
 
     // macOS
-    [DllImport("librust_cache.dylib", EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(MacLib, EntryPoint = "cache_remove", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_remove_mac([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
 
-    [DllImport("librust_cache.dylib", EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(MacLib, EntryPoint = "cache_clear_all", CallingConvention = CallingConvention.Cdecl)]
     private static extern void cache_clear_all_mac();
 
     public static void Remove(string key)
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_remove_win(key);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_remove_linux(key);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_remove_mac(key);
 
         JustCacheEventSource.Log.ReportRemove();
@@ -282,11 +290,11 @@ public static partial class JustCache
 
     public static void ClearAll()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_clear_all_win();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_clear_all_linux();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_clear_all_mac();
 
         JustCacheEventSource.Log.ReportClear();

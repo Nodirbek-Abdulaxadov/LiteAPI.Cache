@@ -167,11 +167,11 @@ public static partial class JustCache
         if (maxItems <= 0) maxItems = 1;
         var u = (UIntPtr)maxItems;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_set_max_items_win(u);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_set_max_items_linux(u);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_set_max_items_mac(u);
         else
             throw new PlatformNotSupportedException();
@@ -180,11 +180,11 @@ public static partial class JustCache
     public static int GetMaxItems()
     {
         UIntPtr u;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             u = cache_get_max_items_win();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             u = cache_get_max_items_linux();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             u = cache_get_max_items_mac();
         else
             throw new PlatformNotSupportedException();
@@ -197,11 +197,11 @@ public static partial class JustCache
         get
         {
             UIntPtr u;
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_platform == Platform.Windows)
                 u = cache_len_win();
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            else if (_platform == Platform.Linux)
                 u = cache_len_linux();
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            else if (_platform == Platform.OSX)
                 u = cache_len_mac();
             else
                 throw new PlatformNotSupportedException();
@@ -218,11 +218,11 @@ public static partial class JustCache
         ulong ttlMs = (ulong)Math.Max(0, (long)ttl.TotalMilliseconds);
         var len = (UIntPtr)val.Length;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_set_with_ttl_win(key, val, len, ttlMs);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_set_with_ttl_linux(key, val, len, ttlMs);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_set_with_ttl_mac(key, val, len, ttlMs);
         else
             throw new PlatformNotSupportedException();
@@ -241,11 +241,11 @@ public static partial class JustCache
         ulong ttlMs = (ulong)Math.Max(0, (long)ttl.TotalMilliseconds);
         int res;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             res = cache_expire_win(key, ttlMs);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             res = cache_expire_linux(key, ttlMs);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             res = cache_expire_mac(key, ttlMs);
         else
             throw new PlatformNotSupportedException();
@@ -261,11 +261,11 @@ public static partial class JustCache
     {
         ArgumentNullException.ThrowIfNull(key);
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             return cache_ttl_win(key);
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        if (_platform == Platform.Linux)
             return cache_ttl_linux(key);
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        if (_platform == Platform.OSX)
             return cache_ttl_mac(key);
 
         throw new PlatformNotSupportedException();
@@ -276,11 +276,11 @@ public static partial class JustCache
         ArgumentNullException.ThrowIfNull(path);
 
         int res;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             res = cache_aof_enable_win(path);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             res = cache_aof_enable_linux(path);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             res = cache_aof_enable_mac(path);
         else
             throw new PlatformNotSupportedException();
@@ -290,11 +290,11 @@ public static partial class JustCache
 
     public static void DisableAof()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_aof_disable_win();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_aof_disable_linux();
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_aof_disable_mac();
         else
             throw new PlatformNotSupportedException();
@@ -305,11 +305,11 @@ public static partial class JustCache
         ArgumentNullException.ThrowIfNull(path);
 
         int res;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             res = cache_aof_load_win(path);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             res = cache_aof_load_linux(path);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             res = cache_aof_load_mac(path);
         else
             throw new PlatformNotSupportedException();
@@ -325,11 +325,11 @@ public static partial class JustCache
         var klen = (UIntPtr)key.Length;
         var vlen = (UIntPtr)val.Length;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_set_b_win(key, klen, val, vlen);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_set_b_linux(key, klen, val, vlen);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_set_b_mac(key, klen, val, vlen);
         else
             throw new PlatformNotSupportedException();
@@ -345,11 +345,11 @@ public static partial class JustCache
         IntPtr ptr;
         var klen = (UIntPtr)key.Length;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_get_b_win(key, klen, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_get_b_linux(key, klen, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_get_b_mac(key, klen, out len);
         else
             throw new PlatformNotSupportedException();
@@ -383,11 +383,11 @@ public static partial class JustCache
             var klen = (UIntPtr)key.Length;
             var dlen = (UIntPtr)destination.Length;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_platform == Platform.Windows)
                 ret = cache_get_into_b_win(keyPtr, klen, dstPtr, dlen);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            else if (_platform == Platform.Linux)
                 ret = cache_get_into_b_linux(keyPtr, klen, dstPtr, dlen);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            else if (_platform == Platform.OSX)
                 ret = cache_get_into_b_mac(keyPtr, klen, dstPtr, dlen);
             else
                 throw new PlatformNotSupportedException();
@@ -447,11 +447,11 @@ public static partial class JustCache
             if (_handle == IntPtr.Zero)
                 return;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_platform == Platform.Windows)
                 cache_bytes_lease_free_win(_handle);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            else if (_platform == Platform.Linux)
                 cache_bytes_lease_free_linux(_handle);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            else if (_platform == Platform.OSX)
                 cache_bytes_lease_free_mac(_handle);
             else
                 throw new PlatformNotSupportedException();
@@ -473,11 +473,11 @@ public static partial class JustCache
         {
             var klen = (UIntPtr)key.Length;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_platform == Platform.Windows)
                 handle = cache_get_lease_b_win(keyPtr, klen, out outPtr, out outLen);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            else if (_platform == Platform.Linux)
                 handle = cache_get_lease_b_linux(keyPtr, klen, out outPtr, out outLen);
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            else if (_platform == Platform.OSX)
                 handle = cache_get_lease_b_mac(keyPtr, klen, out outPtr, out outLen);
             else
                 throw new PlatformNotSupportedException();
@@ -499,11 +499,11 @@ public static partial class JustCache
         ArgumentNullException.ThrowIfNull(key);
 
         var klen = (UIntPtr)key.Length;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_remove_b_win(key, klen);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_remove_b_linux(key, klen);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_remove_b_mac(key, klen);
         else
             throw new PlatformNotSupportedException();

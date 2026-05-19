@@ -45,11 +45,11 @@ public static partial class JustCache
         ArgumentNullException.ThrowIfNull(value);
 
         var len = (UIntPtr)value.Length;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_hset_win(key, field, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_hset_linux(key, field, value, len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_hset_mac(key, field, value, len);
         else
             throw new PlatformNotSupportedException();
@@ -66,11 +66,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_hget_win(key, field, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_hget_linux(key, field, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_hget_mac(key, field, out len);
         else
             throw new PlatformNotSupportedException();
@@ -92,11 +92,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_hgetall_win(key, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_hgetall_linux(key, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_hgetall_mac(key, out len);
         else
             throw new PlatformNotSupportedException();

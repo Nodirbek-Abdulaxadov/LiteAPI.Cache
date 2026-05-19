@@ -33,11 +33,11 @@ public static partial class JustCache
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(member);
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_zadd_win(key, score, member);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_zadd_linux(key, score, member);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_zadd_mac(key, score, member);
         else
             throw new PlatformNotSupportedException();
@@ -48,11 +48,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_zrange_win(key, start, end, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_zrange_linux(key, start, end, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_zrange_mac(key, start, end, out len);
         else
             throw new PlatformNotSupportedException();

@@ -57,11 +57,11 @@ public static partial class JustCache
     {
         ArgumentNullException.ThrowIfNull(channel);
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             return cache_pubsub_subscribe_win(channel);
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        if (_platform == Platform.Linux)
             return cache_pubsub_subscribe_linux(channel);
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        if (_platform == Platform.OSX)
             return cache_pubsub_subscribe_mac(channel);
 
         throw new PlatformNotSupportedException();
@@ -71,11 +71,11 @@ public static partial class JustCache
     {
         if (subId == 0) return;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             cache_pubsub_unsubscribe_win(subId);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             cache_pubsub_unsubscribe_linux(subId);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             cache_pubsub_unsubscribe_mac(subId);
         else
             throw new PlatformNotSupportedException();
@@ -88,11 +88,11 @@ public static partial class JustCache
 
         var len = (UIntPtr)payload.Length;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             return cache_pubsub_publish_win(channel, payload, len);
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        if (_platform == Platform.Linux)
             return cache_pubsub_publish_linux(channel, payload, len);
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        if (_platform == Platform.OSX)
             return cache_pubsub_publish_mac(channel, payload, len);
 
         throw new PlatformNotSupportedException();
@@ -112,11 +112,11 @@ public static partial class JustCache
         UIntPtr len;
         IntPtr ptr;
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_platform == Platform.Windows)
             ptr = cache_pubsub_poll_win(subId, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        else if (_platform == Platform.Linux)
             ptr = cache_pubsub_poll_linux(subId, out len);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (_platform == Platform.OSX)
             ptr = cache_pubsub_poll_mac(subId, out len);
         else
             throw new PlatformNotSupportedException();
