@@ -232,19 +232,20 @@ public static partial class JustCache
     private static extern void cache_free_mac(IntPtr ptr, UIntPtr len);
 #endif
 
+    // Single point of native dispatch for the string-key get. Both Get
+    // (materializes a byte[]) and GetString (decodes straight off the native
+    // buffer) share it so neither duplicates the platform switch.
+    private static IntPtr GetNativePtr(string key, out UIntPtr len)
+    {
+        if (_platform == Platform.Windows) return cache_get_win(key, out len);
+        if (_platform == Platform.Linux)   return cache_get_linux(key, out len);
+        if (_platform == Platform.OSX)     return cache_get_mac(key, out len);
+        throw new PlatformNotSupportedException();
+    }
+
     public static byte[]? Get(string key)
     {
-        UIntPtr len;
-
-        IntPtr ptr;
-        if (_platform == Platform.Windows)
-            ptr = cache_get_win(key, out len);
-        else if (_platform == Platform.Linux)
-            ptr = cache_get_linux(key, out len);
-        else if (_platform == Platform.OSX)
-            ptr = cache_get_mac(key, out len);
-        else
-            throw new PlatformNotSupportedException();
+        var ptr = GetNativePtr(key, out var len);
 
         if (ptr == IntPtr.Zero || len == UIntPtr.Zero)
         {
@@ -290,14 +291,31 @@ public static partial class JustCache
         return result;
     }
 
-    public static string? GetString(string key)
+    // Decodes the value straight off the native buffer instead of allocating
+    // an intermediate managed byte[] (as `Get` + Encoding.GetString(byte[])
+    // would). Only the returned string is allocated — one fewer allocation and
+    // one fewer copy on the string hot path.
+    public static unsafe string? GetString(string key)
     {
-        byte[]? bytes = Get(key);
-        if (bytes == null)
-            return null;
+        var ptr = GetNativePtr(key, out var len);
 
-        // Convert byte array to string
-        return System.Text.Encoding.UTF8.GetString(bytes);
+        if (ptr == IntPtr.Zero || len == UIntPtr.Zero)
+        {
+            JustCacheEventSource.Log.ReportGetMiss();
+            return null;
+        }
+
+        try
+        {
+            var n = (int)len;
+            var result = System.Text.Encoding.UTF8.GetString((byte*)ptr, n);
+            JustCacheEventSource.Log.ReportGetHit(n);
+            return result;
+        }
+        finally
+        {
+            FreeNative(ptr, len);
+        }
     }
 
     public static bool TryGet(string key, out byte[] value)
