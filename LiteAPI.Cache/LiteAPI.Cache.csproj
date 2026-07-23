@@ -10,9 +10,9 @@
     <Description>High-performance GC-free cache powered by Rust and C# interop</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache</RepositoryUrl>
-    <Version>2.3.0</Version>
+    <Version>2.4.0</Version>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
-    <PackageReleaseNotes>Stampede protection: single-flight GetOrCompute / GetOrComputeString / GetOrComputeAsync (+ TTL overloads) collapse concurrent misses of the same key onto a single factory execution. Purely managed; the zero-allocation read path (TryGet(byte[], Span&lt;byte&gt;), GetLease) is unchanged.</PackageReleaseNotes>
+    <PackageReleaseNotes>Get-or-compute hot-path optimizations on top of 2.3.0 stampede protection: GetString and GetOrComputeString decode straight off the native buffer (no intermediate byte[]); a new zero-allocation GetOrCompute(byte[] key, Span&lt;byte&gt; destination, factory, out written) overload copies into the caller buffer on a hit; the single-flight miss path avoids per-call closures. API change: GetOrComputeAsync now returns ValueTask&lt;byte[]&gt; (was Task&lt;byte[]&gt;) so a hit allocates no Task — source-compatible for `await` callers.</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
