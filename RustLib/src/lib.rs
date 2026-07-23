@@ -14,6 +14,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lru::LruCache;
+use ahash::RandomState;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 
@@ -90,8 +91,8 @@ struct Entry {
 /// and binary-keyed entries. Shards are independent — concurrent
 /// operations on different shards do not block each other.
 struct CacheState {
-    map: LruCache<String, Entry>,
-    map_b: LruCache<Vec<u8>, Entry>,
+    map: LruCache<String, Entry, RandomState>,
+    map_b: LruCache<Vec<u8>, Entry, RandomState>,
 }
 
 /// Phase4: numeric secondary index. Global (cross-shard) because the
@@ -114,21 +115,18 @@ fn per_shard_cap(total: usize) -> NonZeroUsize {
     NonZeroUsize::new((total / NUM_SHARDS).max(1)).unwrap()
 }
 
-/// Pick a shard for a string key. We use `DefaultHasher` for fast,
-/// uniform distribution; FNV / xxhash would also work — anything
-/// stable across the program's lifetime is fine.
+/// One process-wide hash builder for shard selection and the per-shard LRU
+/// maps. ahash is ~2-5x faster than the std SipHash default; keys here are
+/// trusted (in-process), so SipHash's DoS resistance buys nothing.
+static HASHER: Lazy<RandomState> = Lazy::new(RandomState::new);
+
+/// Pick a shard for a string key.
 fn shard_for_str(key: &str) -> usize {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
-    (h.finish() as usize) % NUM_SHARDS
+    (HASHER.hash_one(key) as usize) % NUM_SHARDS
 }
 
 fn shard_for_b(key: &[u8]) -> usize {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.hash(&mut h);
-    (h.finish() as usize) % NUM_SHARDS
+    (HASHER.hash_one(key) as usize) % NUM_SHARDS
 }
 
 // Global Cache Storage — `NUM_SHARDS` independent LRUs plus one global
@@ -138,8 +136,8 @@ static CACHE: Lazy<ShardedCache> = Lazy::new(|| {
     let mut shards = Vec::with_capacity(NUM_SHARDS);
     for _ in 0..NUM_SHARDS {
         shards.push(RwLock::new(CacheState {
-            map: LruCache::new(cap),
-            map_b: LruCache::new(cap),
+            map: LruCache::with_hasher(cap, RandomState::new()),
+            map_b: LruCache::with_hasher(cap, RandomState::new()),
         }));
     }
     ShardedCache {
@@ -165,6 +163,16 @@ unsafe fn to_bytes(ptr: *const c_uchar, len: usize) -> Vec<u8> {
         return Vec::new();
     }
     std::slice::from_raw_parts(ptr, len).to_vec()
+}
+
+// Borrow the native UTF-8 key as &str without allocating an owned String.
+// Read paths only need to look the key up (String: Borrow<str>), so the
+// owning copy that `to_string` makes is pure waste on every hit.
+unsafe fn to_str_borrow<'a>(ptr: *const c_char) -> Option<&'a str> {
+    if ptr.is_null() {
+        return None;
+    }
+    CStr::from_ptr(ptr).to_str().ok()
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -198,7 +206,7 @@ fn bytes_to_hex_key(key_bytes: &[u8]) -> String {
 /// shard write-lock; we additionally grab the indexes lock if the
 /// evicted entry needs to be un-indexed. Returns true if anything was
 /// dropped.
-fn maybe_remove_if_expired(shard: &mut CacheState, key: &String) -> bool {
+fn maybe_remove_if_expired(shard: &mut CacheState, key: &str) -> bool {
     if let Some(entry) = shard.map.peek(key) {
         if is_expired(entry) {
             if let Some(evicted) = shard.map.pop(key) {
@@ -212,7 +220,7 @@ fn maybe_remove_if_expired(shard: &mut CacheState, key: &String) -> bool {
     false
 }
 
-fn maybe_remove_if_expired_b(shard: &mut CacheState, key: &Vec<u8>) -> bool {
+fn maybe_remove_if_expired_b(shard: &mut CacheState, key: &[u8]) -> bool {
     if let Some(entry) = shard.map_b.peek(key) {
         if is_expired(entry) {
             let _ = shard.map_b.pop(key);
@@ -532,16 +540,19 @@ pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *mut c_u
         if out_len.is_null() {
             return std::ptr::null_mut();
         }
-        let key_str = unsafe { to_string(key) };
-        let shard_idx = shard_for_str(&key_str);
+        let Some(key_str) = (unsafe { to_str_borrow(key) }) else {
+            unsafe { *out_len = 0 };
+            return std::ptr::null_mut();
+        };
+        let shard_idx = shard_for_str(key_str);
         let mut state = CACHE.shards[shard_idx].write().unwrap();
 
-        if maybe_remove_if_expired(&mut state, &key_str) {
+        if maybe_remove_if_expired(&mut state, key_str) {
             unsafe { *out_len = 0 };
             return std::ptr::null_mut();
         }
 
-        if let Some(entry) = state.map.get(&key_str) {
+        if let Some(entry) = state.map.get(key_str) {
             if let Value::Bytes(val) = &entry.value {
                 return prepare_return((**val).clone(), out_len);
             }
@@ -561,18 +572,20 @@ pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *mut c_u
 #[no_mangle]
 pub extern "C" fn cache_get_into(key: *const c_char, dst: *mut c_uchar, dst_len: usize) -> i64 {
     ffi_guard("cache_get_into", -1, || {
-        let key_str = unsafe { to_string(key) };
+        let Some(key_str) = (unsafe { to_str_borrow(key) }) else {
+            return -1;
+        };
         if key_str.is_empty() {
             return -1;
         }
 
-        let shard_idx = shard_for_str(&key_str);
+        let shard_idx = shard_for_str(key_str);
         let mut state = CACHE.shards[shard_idx].write().unwrap();
-        if maybe_remove_if_expired(&mut state, &key_str) {
+        if maybe_remove_if_expired(&mut state, key_str) {
             return -1;
         }
 
-        let Some(entry) = state.map.get(&key_str) else {
+        let Some(entry) = state.map.get(key_str) else {
             return -1;
         };
 
@@ -1645,16 +1658,20 @@ pub extern "C" fn cache_get_b(key: *const c_uchar, key_len: usize, out_len: *mut
         if out_len.is_null() {
             return std::ptr::null_mut();
         }
-        let key_vec = unsafe { to_bytes(key, key_len) };
-        let shard_idx = shard_for_b(&key_vec);
+        if key.is_null() || key_len == 0 {
+            unsafe { *out_len = 0 };
+            return std::ptr::null_mut();
+        }
+        let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
+        let shard_idx = shard_for_b(key_slice);
         let mut state = CACHE.shards[shard_idx].write().unwrap();
 
-        if maybe_remove_if_expired_b(&mut state, &key_vec) {
+        if maybe_remove_if_expired_b(&mut state, key_slice) {
             unsafe { *out_len = 0 };
             return std::ptr::null_mut();
         }
 
-        if let Some(entry) = state.map_b.get(&key_vec) {
+        if let Some(entry) = state.map_b.get(key_slice) {
             if let Value::Bytes(val) = &entry.value {
                 return prepare_return((**val).clone(), out_len);
             }
@@ -1668,18 +1685,18 @@ pub extern "C" fn cache_get_b(key: *const c_uchar, key_len: usize, out_len: *mut
 #[no_mangle]
 pub extern "C" fn cache_get_into_b(key: *const c_uchar, key_len: usize, dst: *mut c_uchar, dst_len: usize) -> i64 {
     ffi_guard("cache_get_into_b", -1, || {
-        let key_vec = unsafe { to_bytes(key, key_len) };
-        if key_vec.is_empty() {
+        if key.is_null() || key_len == 0 {
             return -1;
         }
+        let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
-        let shard_idx = shard_for_b(&key_vec);
+        let shard_idx = shard_for_b(key_slice);
         let mut state = CACHE.shards[shard_idx].write().unwrap();
-        if maybe_remove_if_expired_b(&mut state, &key_vec) {
+        if maybe_remove_if_expired_b(&mut state, key_slice) {
             return -1;
         }
 
-        let Some(entry) = state.map_b.get(&key_vec) else {
+        let Some(entry) = state.map_b.get(key_slice) else {
             return -1;
         };
         let Value::Bytes(val) = &entry.value else {
@@ -1720,15 +1737,15 @@ pub extern "C" fn cache_peek_into_b(
     dst_len: usize,
 ) -> i64 {
     ffi_guard("cache_peek_into_b", -1, || {
-        let key_vec = unsafe { to_bytes(key, key_len) };
-        if key_vec.is_empty() {
+        if key.is_null() || key_len == 0 {
             return -1;
         }
+        let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
-        let shard_idx = shard_for_b(&key_vec);
+        let shard_idx = shard_for_b(key_slice);
         let state = CACHE.shards[shard_idx].read().unwrap();
 
-        let Some(entry) = state.map_b.peek(&key_vec) else {
+        let Some(entry) = state.map_b.peek(key_slice) else {
             return -1;
         };
         // Skip expired entries lazily — we can't evict under a read
@@ -1772,18 +1789,18 @@ pub extern "C" fn cache_get_lease_b(
             return std::ptr::null();
         }
 
-        let key_vec = unsafe { to_bytes(key, key_len) };
-        if key_vec.is_empty() {
+        if key.is_null() || key_len == 0 {
             unsafe {
                 *out_ptr = std::ptr::null();
                 *out_len = 0;
             }
             return std::ptr::null();
         }
+        let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
-        let shard_idx = shard_for_b(&key_vec);
+        let shard_idx = shard_for_b(key_slice);
         let mut state = CACHE.shards[shard_idx].write().unwrap();
-        if maybe_remove_if_expired_b(&mut state, &key_vec) {
+        if maybe_remove_if_expired_b(&mut state, key_slice) {
             unsafe {
                 *out_ptr = std::ptr::null();
                 *out_len = 0;
@@ -1791,7 +1808,7 @@ pub extern "C" fn cache_get_lease_b(
             return std::ptr::null();
         }
 
-        let Some(entry) = state.map_b.get(&key_vec) else {
+        let Some(entry) = state.map_b.get(key_slice) else {
             unsafe {
                 *out_ptr = std::ptr::null();
                 *out_len = 0;
@@ -1833,18 +1850,18 @@ pub extern "C" fn cache_peek_lease_b(
             return std::ptr::null();
         }
 
-        let key_vec = unsafe { to_bytes(key, key_len) };
-        if key_vec.is_empty() {
+        if key.is_null() || key_len == 0 {
             unsafe {
                 *out_ptr = std::ptr::null();
                 *out_len = 0;
             }
             return std::ptr::null();
         }
+        let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
-        let shard_idx = shard_for_b(&key_vec);
+        let shard_idx = shard_for_b(key_slice);
         let state = CACHE.shards[shard_idx].read().unwrap();
-        let Some(entry) = state.map_b.peek(&key_vec) else {
+        let Some(entry) = state.map_b.peek(key_slice) else {
             unsafe {
                 *out_ptr = std::ptr::null();
                 *out_len = 0;
