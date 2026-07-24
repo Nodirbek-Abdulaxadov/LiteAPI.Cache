@@ -10,7 +10,8 @@ use std::num::NonZeroUsize;
 use std::os::raw::{c_char, c_uchar};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
+use parking_lot::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lru::LruCache;
@@ -129,6 +130,26 @@ fn shard_for_b(key: &[u8]) -> usize {
     (HASHER.hash_one(key) as usize) % NUM_SHARDS
 }
 
+// Sampled-LRU: reads take the shard READ lock (concurrent) and copy the
+// value; only ~1/PROMOTE_EVERY reads take the WRITE lock to bump recency.
+// This trades exact LRU recency for read scalability. The counter is
+// thread-local, so it never becomes a shared-cache-line contention point.
+const PROMOTE_EVERY: u32 = 8;
+thread_local! {
+    static PROMOTE_TICK: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+fn should_promote() -> bool {
+    PROMOTE_TICK.with(|c| {
+        let n = c.get().wrapping_add(1);
+        c.set(n);
+        n % PROMOTE_EVERY == 0
+    })
+}
+fn promote_b(shard_idx: usize, key: &[u8]) {
+    let mut state = CACHE.shards[shard_idx].write();
+    let _ = state.map_b.get(key);
+}
+
 // Global Cache Storage — `NUM_SHARDS` independent LRUs plus one global
 // indexes table.
 static CACHE: Lazy<ShardedCache> = Lazy::new(|| {
@@ -210,7 +231,7 @@ fn maybe_remove_if_expired(shard: &mut CacheState, key: &str) -> bool {
     if let Some(entry) = shard.map.peek(key) {
         if is_expired(entry) {
             if let Some(evicted) = shard.map.pop(key) {
-                let mut idx = CACHE.indexes.write().unwrap();
+                let mut idx = CACHE.indexes.write();
                 index_remove_for_entry(&mut idx, key, &evicted);
             }
             notify_expired(key);
@@ -299,7 +320,7 @@ fn put_entry_with_lru(shard: &mut CacheState, key: String, entry: Entry) {
     let overwritten = shard.map.pop(&key);
 
     {
-        let mut idx = CACHE.indexes.write().unwrap();
+        let mut idx = CACHE.indexes.write();
         if let Some((evicted_key, evicted_entry)) = &evicted_for_index {
             index_remove_for_entry(&mut idx, evicted_key, evicted_entry);
         }
@@ -382,7 +403,7 @@ fn start_expiry_thread_once() {
                 match key {
                     ExpiryKey::Str(k) => {
                         let shard_idx = shard_for_str(&k);
-                        let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                        let mut shard = CACHE.shards[shard_idx].write();
                         // Validate: the cache entry still has this exact
                         // expires_at_ms. Otherwise the heap record is stale
                         // (key was updated or removed) and we skip.
@@ -392,7 +413,7 @@ fn start_expiry_thread_once() {
                         );
                         if still_valid {
                             if let Some(evicted) = shard.map.pop(&k) {
-                                let mut idx = CACHE.indexes.write().unwrap();
+                                let mut idx = CACHE.indexes.write();
                                 index_remove_for_entry(&mut idx, &k, &evicted);
                             }
                             notify_expired(&k);
@@ -400,7 +421,7 @@ fn start_expiry_thread_once() {
                     }
                     ExpiryKey::Bytes(k) => {
                         let shard_idx = shard_for_b(&k);
-                        let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                        let mut shard = CACHE.shards[shard_idx].write();
                         let still_valid = matches!(
                             shard.map_b.peek(&k),
                             Some(e) if e.expires_at_ms == Some(expires_at_ms)
@@ -441,7 +462,7 @@ fn apply_set_internal_b(shard: &mut CacheState, key: Vec<u8>, val: Vec<u8>) {
 
 fn apply_remove_internal(shard: &mut CacheState, key: &String) {
     if let Some(old) = shard.map.pop(key) {
-        let mut idx = CACHE.indexes.write().unwrap();
+        let mut idx = CACHE.indexes.write();
         index_remove_for_entry(&mut idx, key, &old);
     }
 }
@@ -460,10 +481,10 @@ fn apply_clear_internal(shard: &mut CacheState) {
 /// any future code that adopts the same convention.
 fn clear_all_shards() {
     for shard_lock in &CACHE.shards {
-        let mut shard = shard_lock.write().unwrap();
+        let mut shard = shard_lock.write();
         apply_clear_internal(&mut shard);
     }
-    CACHE.indexes.write().unwrap().clear();
+    CACHE.indexes.write().clear();
 }
 
 fn apply_expire_internal(shard: &mut CacheState, key: &String, ttl_ms: u64) -> bool {
@@ -505,7 +526,7 @@ pub extern "C" fn cache_remove(key: *const c_char) {
     ffi_guard("cache_remove", (), || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         apply_remove_internal(&mut state, &key_str);
         aof_write_remove(&key_str);
     })
@@ -529,7 +550,7 @@ pub extern "C" fn cache_set(key: *const c_char, value: *const c_uchar, len: usiz
         // Write AOF without holding the cache lock.
         aof_write_set(&key_str, &val_vec);
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         apply_set_internal(&mut state, key_str, val_vec);
     })
 }
@@ -545,7 +566,7 @@ pub extern "C" fn cache_get(key: *const c_char, out_len: *mut usize) -> *mut c_u
             return std::ptr::null_mut();
         };
         let shard_idx = shard_for_str(key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
 
         if maybe_remove_if_expired(&mut state, key_str) {
             unsafe { *out_len = 0 };
@@ -580,7 +601,7 @@ pub extern "C" fn cache_get_into(key: *const c_char, dst: *mut c_uchar, dst_len:
         }
 
         let shard_idx = shard_for_str(key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, key_str) {
             return -1;
         }
@@ -619,7 +640,7 @@ pub extern "C" fn cache_hset(key: *const c_char, field: *const c_char, value: *c
         let val_vec = unsafe { to_bytes(value, len) };
     
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             // fallthrough to create fresh
         }
@@ -652,7 +673,7 @@ pub extern "C" fn cache_hget(key: *const c_char, field: *const c_char, out_len: 
         let field_str = unsafe { to_string(field) };
     
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
             return std::ptr::null_mut();
@@ -675,7 +696,7 @@ pub extern "C" fn cache_hgetall(key: *const c_char, out_len: *mut usize) -> *mut
     ffi_guard("cache_hgetall", std::ptr::null_mut(), || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
 
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
@@ -712,7 +733,7 @@ pub extern "C" fn cache_lpush(key: *const c_char, value: *const c_uchar, len: us
         let val_vec = unsafe { to_bytes(value, len) };
     
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             // create fresh
         }
@@ -742,7 +763,7 @@ pub extern "C" fn cache_rpop(key: *const c_char, out_len: *mut usize) -> *mut c_
         let key_str = unsafe { to_string(key) };
 
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
             return std::ptr::null_mut();
@@ -775,7 +796,7 @@ pub extern "C" fn cache_lrange(key: *const c_char, start: i32, end: i32, out_len
     ffi_guard("cache_lrange", std::ptr::null_mut(), || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
 
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
@@ -823,7 +844,7 @@ pub extern "C" fn cache_sadd(key: *const c_char, value: *const c_uchar, len: usi
         let val_vec = unsafe { to_bytes(value, len) };
     
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             // create fresh
         }
@@ -860,7 +881,7 @@ pub extern "C" fn cache_sismember(key: *const c_char, value: *const c_uchar, len
         let val_vec = unsafe { to_bytes(value, len) };
     
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             return 0;
         }
@@ -883,7 +904,7 @@ pub extern "C" fn cache_zadd(key: *const c_char, score: f64, member: *const c_ch
         let member_str = unsafe { to_string(member) };
     
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             // create fresh
         }
@@ -914,7 +935,7 @@ pub extern "C" fn cache_zrange(key: *const c_char, start: i32, end: i32, out_len
     ffi_guard("cache_zrange", std::ptr::null_mut(), || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
 
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
@@ -982,7 +1003,7 @@ pub extern "C" fn cache_set_max_items(max_items: usize) {
         // totals.
         let cap = per_shard_cap(max_items);
         for shard_lock in &CACHE.shards {
-            let mut shard = shard_lock.write().unwrap();
+            let mut shard = shard_lock.write();
             shard.map.resize(cap);
             shard.map_b.resize(cap);
         }
@@ -1001,7 +1022,7 @@ pub extern "C" fn cache_len() -> usize {
     ffi_guard("cache_len", 0, || {
         let mut total = 0usize;
         for shard_lock in &CACHE.shards {
-            let shard = shard_lock.read().unwrap();
+            let shard = shard_lock.read();
             total = total
                 .saturating_add(shard.map.len())
                 .saturating_add(shard.map_b.len());
@@ -1018,7 +1039,7 @@ pub extern "C" fn cache_set_with_ttl(key: *const c_char, value: *const c_uchar, 
         let expires_at = now_ms().saturating_add(ttl_ms);
 
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         put_entry_with_lru(
             &mut state,
             key_str.clone(),
@@ -1038,7 +1059,7 @@ pub extern "C" fn cache_expire(key: *const c_char, ttl_ms: u64) -> i32 {
     ffi_guard("cache_expire", 0, || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         let ok = apply_expire_internal(&mut state, &key_str, ttl_ms);
         if ok {
             let expires_at = now_ms().saturating_add(ttl_ms);
@@ -1055,7 +1076,7 @@ pub extern "C" fn cache_ttl(key: *const c_char) -> i64 {
     ffi_guard("cache_ttl", -1, || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
 
         if maybe_remove_if_expired(&mut state, &key_str) {
             return -2;
@@ -1122,7 +1143,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let vlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
                     apply_set_internal(&mut shard, key, val);
                 }
                 AOF_OP_SET_B => {
@@ -1131,21 +1152,21 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let vlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_b(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
                     apply_set_internal_b(&mut shard, key, val);
                 }
                 AOF_OP_REMOVE => {
                     let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let key = match read_exact_string(&mut file, klen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
                     apply_remove_internal(&mut shard, &key);
                 }
                 AOF_OP_REMOVE_B => {
                     let klen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let key = match read_exact_vec(&mut file, klen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_b(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
                     apply_remove_internal_b(&mut shard, &key);
                 }
                 AOF_OP_CLEAR => {
@@ -1156,7 +1177,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let key = match read_exact_string(&mut file, klen) { Some(v) => v, None => break };
                     let ttl_ms = match read_exact_u64(&mut file) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
                     let _ = apply_expire_internal(&mut shard, &key, ttl_ms);
                 }
                 AOF_OP_EXPIRE_AT => {
@@ -1164,7 +1185,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let key = match read_exact_string(&mut file, klen) { Some(v) => v, None => break };
                     let expires_at_ms = match read_exact_u64(&mut file) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
                     if expires_at_ms <= now_ms() {
                         apply_remove_internal(&mut shard, &key);
                     } else if let Some(mut entry) = shard.map.pop(&key) {
@@ -1180,7 +1201,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let vlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
 
                     let mut entry = shard
                         .map
@@ -1204,7 +1225,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let vlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
 
                     let mut entry = shard
                         .map
@@ -1226,7 +1247,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let vlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let val = match read_exact_vec(&mut file, vlen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
 
                     let mut entry = shard
                         .map
@@ -1251,7 +1272,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let mlen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let member = match read_exact_string(&mut file, mlen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
 
                     let mut entry = shard
                         .map
@@ -1276,7 +1297,7 @@ pub extern "C" fn cache_aof_load(path: *const c_char) -> i32 {
                     let plen = match read_exact_u32(&mut file) { Some(v) => v as usize, None => break };
                     let payload = match read_exact_vec(&mut file, plen) { Some(v) => v, None => break };
                     let shard_idx = shard_for_str(&key);
-                    let mut shard = CACHE.shards[shard_idx].write().unwrap();
+                    let mut shard = CACHE.shards[shard_idx].write();
 
                     let mut entry = shard
                         .map
@@ -1310,7 +1331,7 @@ pub extern "C" fn cache_set_b(key: *const c_uchar, key_len: usize, value: *const
         // Write AOF without holding the cache lock.
         aof_write_set_b(&key_vec, &val_vec);
         let shard_idx = shard_for_b(&key_vec);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         apply_set_internal_b(&mut state, key_vec, val_vec);
     })
 }
@@ -1328,7 +1349,7 @@ pub extern "C" fn cache_json_get(key: *const c_char, path: *const c_char, out_le
         };
 
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
             return std::ptr::null_mut();
@@ -1377,7 +1398,7 @@ pub extern "C" fn cache_json_set(key: *const c_char, path: *const c_char, json_v
         };
 
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             // create fresh
         }
@@ -1426,7 +1447,7 @@ pub extern "C" fn cache_index_create_numeric(field: *const c_char) -> i32 {
         // We hold one shard lock at a time to avoid blocking the world.
         let mut idx_map = BTreeMap::<i64, HashSet<String>>::new();
         for shard_lock in &CACHE.shards {
-            let shard = shard_lock.read().unwrap();
+            let shard = shard_lock.read();
             for (k, v) in shard.map.iter() {
                 if let Some(json) = try_parse_json_from_entry(v) {
                     if let Some(num) = extract_numeric_field(&json, &field_str) {
@@ -1435,7 +1456,7 @@ pub extern "C" fn cache_index_create_numeric(field: *const c_char) -> i32 {
                 }
             }
         }
-        let mut indexes = CACHE.indexes.write().unwrap();
+        let mut indexes = CACHE.indexes.write();
         indexes.insert(field_str, idx_map);
         1
     })
@@ -1467,7 +1488,7 @@ pub extern "C" fn cache_find(query: *const c_char, out_len: *mut usize) -> *mut 
         let value_num: Option<i64> = value_str.parse::<i64>().ok();
         let mut keys: Vec<String> = Vec::new();
 
-        let indexes = CACHE.indexes.read().unwrap();
+        let indexes = CACHE.indexes.read();
         let indexed_hit = value_num.zip(indexes.get(&field));
 
         if let Some((vnum, idx)) = indexed_hit {
@@ -1504,7 +1525,7 @@ pub extern "C" fn cache_find(query: *const c_char, out_len: *mut usize) -> *mut 
             drop(indexes);
             // Fallback scan walks every shard.
             for shard_lock in &CACHE.shards {
-                let shard = shard_lock.read().unwrap();
+                let shard = shard_lock.read();
                 for (k, entry) in shard.map.iter() {
                     if is_expired(entry) {
                         continue;
@@ -1586,7 +1607,7 @@ pub extern "C" fn cache_eval(script: *const c_char, out_len: *mut usize) -> *mut
                 let bytes = value_str.as_bytes().to_vec();
                 let key_owned = key.to_string();
                 let shard_idx = shard_for_str(&key_owned);
-                let mut state = CACHE.shards[shard_idx].write().unwrap();
+                let mut state = CACHE.shards[shard_idx].write();
                 put_entry_with_lru(
                     &mut state,
                     key_owned,
@@ -1603,7 +1624,7 @@ pub extern "C" fn cache_eval(script: *const c_char, out_len: *mut usize) -> *mut
                 }
                 let key_owned = key.to_string();
                 let shard_idx = shard_for_str(&key_owned);
-                let mut state = CACHE.shards[shard_idx].write().unwrap();
+                let mut state = CACHE.shards[shard_idx].write();
                 let existed = state.map.contains(&key_owned);
                 apply_remove_internal(&mut state, &key_owned);
                 aof_write_remove(key);
@@ -1664,7 +1685,7 @@ pub extern "C" fn cache_get_b(key: *const c_uchar, key_len: usize, out_len: *mut
         }
         let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
         let shard_idx = shard_for_b(key_slice);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
 
         if maybe_remove_if_expired_b(&mut state, key_slice) {
             unsafe { *out_len = 0 };
@@ -1689,32 +1710,40 @@ pub extern "C" fn cache_get_into_b(key: *const c_uchar, key_len: usize, dst: *mu
             return -1;
         }
         let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
-
         let shard_idx = shard_for_b(key_slice);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
-        if maybe_remove_if_expired_b(&mut state, key_slice) {
-            return -1;
-        }
 
-        let Some(entry) = state.map_b.get(key_slice) else {
-            return -1;
+        // Read + copy under the shard READ lock so concurrent readers of the
+        // same shard don't serialize. Expiry is detected (treated as a miss)
+        // but not evicted here — the reaper / write paths handle eviction.
+        let ret = {
+            let state = CACHE.shards[shard_idx].read();
+            let Some(entry) = state.map_b.peek(key_slice) else {
+                return -1;
+            };
+            if is_expired(entry) {
+                return -1;
+            }
+            let Value::Bytes(val) = &entry.value else {
+                return -1;
+            };
+            let value_len = val.len();
+            if value_len == 0 {
+                0i64
+            } else if dst.is_null() || dst_len < value_len {
+                -(value_len as i64)
+            } else {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(val.as_ptr(), dst, value_len);
+                }
+                value_len as i64
+            }
         };
-        let Value::Bytes(val) = &entry.value else {
-            return -1;
-        };
 
-        let value_len = val.len();
-        if value_len == 0 {
-            return 0;
+        // Sampled recency bump under the write lock (~1/PROMOTE_EVERY hits).
+        if should_promote() {
+            promote_b(shard_idx, key_slice);
         }
-        if dst.is_null() || dst_len < value_len {
-            return -(value_len as i64);
-        }
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(val.as_ptr(), dst, value_len);
-        }
-        value_len as i64
+        ret
     })
 }
 
@@ -1743,7 +1772,7 @@ pub extern "C" fn cache_peek_into_b(
         let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
         let shard_idx = shard_for_b(key_slice);
-        let state = CACHE.shards[shard_idx].read().unwrap();
+        let state = CACHE.shards[shard_idx].read();
 
         let Some(entry) = state.map_b.peek(key_slice) else {
             return -1;
@@ -1799,7 +1828,7 @@ pub extern "C" fn cache_get_lease_b(
         let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
         let shard_idx = shard_for_b(key_slice);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired_b(&mut state, key_slice) {
             unsafe {
                 *out_ptr = std::ptr::null();
@@ -1860,7 +1889,7 @@ pub extern "C" fn cache_peek_lease_b(
         let key_slice = unsafe { std::slice::from_raw_parts(key, key_len) };
 
         let shard_idx = shard_for_b(key_slice);
-        let state = CACHE.shards[shard_idx].read().unwrap();
+        let state = CACHE.shards[shard_idx].read();
         let Some(entry) = state.map_b.peek(key_slice) else {
             unsafe {
                 *out_ptr = std::ptr::null();
@@ -1910,7 +1939,7 @@ pub extern "C" fn cache_remove_b(key: *const c_uchar, key_len: usize) {
     ffi_guard("cache_remove_b", (), || {
         let key_vec = unsafe { to_bytes(key, key_len) };
         let shard_idx = shard_for_b(&key_vec);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         apply_remove_internal_b(&mut state, &key_vec);
         aof_write_remove_b(&key_vec);
     })
@@ -2054,7 +2083,7 @@ pub extern "C" fn cache_xadd(key: *const c_char, payload: *const c_uchar, len: u
         let id = STREAM_ID.fetch_add(1, Ordering::Relaxed);
 
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             // create fresh
         }
@@ -2084,7 +2113,7 @@ pub extern "C" fn cache_xrange(key: *const c_char, start_id: u64, end_id: u64, o
     ffi_guard("cache_xrange", std::ptr::null_mut(), || {
         let key_str = unsafe { to_string(key) };
         let shard_idx = shard_for_str(&key_str);
-        let mut state = CACHE.shards[shard_idx].write().unwrap();
+        let mut state = CACHE.shards[shard_idx].write();
         if maybe_remove_if_expired(&mut state, &key_str) {
             unsafe { *out_len = 0 };
             return std::ptr::null_mut();
