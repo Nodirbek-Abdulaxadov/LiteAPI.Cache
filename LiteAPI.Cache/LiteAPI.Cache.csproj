@@ -10,9 +10,9 @@
     <Description>High-performance GC-free cache powered by Rust and C# interop</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Nodirbek-Abdulaxadov/LiteAPI.Cache</RepositoryUrl>
-    <Version>2.5.0</Version>
+    <Version>2.6.0</Version>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
-    <PackageReleaseNotes>Native read-path optimizations: the shard/LRU hasher moves from SipHash to ahash (faster hashing), and every read looks the key up by a borrowed slice/&amp;str instead of allocating an owned copy per call. ~25% lower hit latency in a same-machine A/B micro-benchmark (TryGet and GetString), with no API or behavior changes. Requires the 2.5.0 native binaries.</PackageReleaseNotes>
+    <PackageReleaseNotes>Read scalability: shard locks move to parking_lot::RwLock, and TryGet(byte[], Span) now reads under the shard read lock with sampled LRU recency — a hit bumps recency ~1/8 of the time under a brief write lock instead of taking the write lock on every read. Concurrent TryGet throughput improves (~10-13% in a 4-core A/B, more with cores); single-thread is unchanged. Behavior note: TryGet's LRU recency is now approximate — use TryPeek to skip recency entirely. Object-returning reads (Get/GetString) keep exact LRU. Requires the 2.6.0 native binaries.</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
