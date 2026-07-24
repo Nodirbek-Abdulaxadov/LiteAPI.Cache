@@ -1,0 +1,5 @@
+Cache,StampedeProtection,Ttl,FailSafe,DistributedBackplane,AutoInvalidation,AsyncNative,ZeroExternalDeps
+MemoryCache,False,True,False,False,False,True,True
+FusionCache,True,True,True,True,False,True,True
+ActualLab.Fusion,True,False,False,True,True,True,False
+LiteAPI.Cache,True,True,False,False,False,True,True
