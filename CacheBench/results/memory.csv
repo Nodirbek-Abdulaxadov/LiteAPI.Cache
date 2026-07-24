@@ -1,0 +1,5 @@
+Cache,Entries,ManagedBytesTotal,ManagedBytesPerEntry,WorkingSetDelta
+MemoryCache,100000,16507904,165.079,26378240
+FusionCache,100000,69814064,698.1406,63197184
+ActualLab.Fusion,100000,14302920,143.0292,91242496
+LiteAPI.Cache,100000,3088,0.0309,51195904

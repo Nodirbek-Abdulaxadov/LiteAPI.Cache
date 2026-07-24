@@ -1,0 +1,5 @@
+Cache,Entries,ManagedAddedBytes,EmptyPauseMs,FullPauseMs,MarginalPauseMs,RetainedFraction
+MemoryCache,300000,51037304,15.778,43.4222,27.6442,1
+FusionCache,300000,212463192,4.9524,159.7727,154.8202,1
+ActualLab.Fusion,300000,11860024,20.5939,28.9688,8.375,0
+LiteAPI.Cache,300000,512,11.6593,12.4249,0.7656,1
